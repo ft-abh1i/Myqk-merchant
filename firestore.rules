@@ -12,7 +12,8 @@ service cloud.firestore {
     }
 
     function merchantExists() {
-      return signedIn() && exists(/databases/$(database)/documents/merchants/$(request.auth.uid));
+      return signedIn()
+        && exists(/databases/$(database)/documents/merchants/$(request.auth.uid));
     }
 
     function merchantProfile() {
@@ -20,11 +21,13 @@ service cloud.firestore {
     }
 
     function isOnboardedMerchant() {
-      return merchantExists() && merchantProfile().data.onboardingComplete == true;
+      return merchantExists()
+        && merchantProfile().data.onboardingComplete == true;
     }
 
     function riderExists() {
-      return signedIn() && exists(/databases/$(database)/documents/riders/$(request.auth.uid));
+      return signedIn()
+        && exists(/databases/$(database)/documents/riders/$(request.auth.uid));
     }
 
     function riderProfile() {
@@ -32,7 +35,8 @@ service cloud.firestore {
     }
 
     function isOnboardedRider() {
-      return riderExists() && riderProfile().data.onboardingComplete == true;
+      return riderExists()
+        && riderProfile().data.onboardingComplete == true;
     }
 
     function merchantOwnsStore(storeId) {
@@ -43,11 +47,13 @@ service cloud.firestore {
     function publicStore(storeId) {
       return exists(/databases/$(database)/documents/stores/$(storeId))
         && get(/databases/$(database)/documents/stores/$(storeId)).data.isApproved == true
-        && get(/databases/$(database)/documents/stores/$(storeId)).data.status == 'active';
+        && get(/databases/$(database)/documents/stores/$(storeId)).data.status == 'active'
+        && get(/databases/$(database)/documents/stores/$(storeId)).data.isOpen != false;
     }
 
     function customerOwnsOrder() {
-      return signedIn() && resource.data.customerId == request.auth.uid;
+      return signedIn()
+        && resource.data.customerId == request.auth.uid;
     }
 
     function merchantOwnsOrder() {
@@ -71,6 +77,21 @@ service cloud.firestore {
         && request.resource.data.totalAmount == resource.data.totalAmount;
     }
 
+    match /customers/{customerId} {
+      allow create: if isOwner(customerId)
+        && request.resource.data.uid == request.auth.uid;
+
+      allow read: if isOwner(customerId);
+
+      allow update: if isOwner(customerId)
+        && request.resource.data.uid == resource.data.uid
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          'fullName', 'phone', 'address', 'location', 'updatedAt'
+        ]);
+
+      allow delete: if false;
+    }
+
     match /merchants/{merchantId} {
       allow create: if isOwner(merchantId)
         && request.resource.data.uid == request.auth.uid
@@ -79,12 +100,14 @@ service cloud.firestore {
 
       allow read: if isOwner(merchantId);
 
+      // MVP auto-approval is intentionally allowed until the admin panel is built.
       allow update: if isOwner(merchantId)
         && request.resource.data.uid == resource.data.uid
         && request.resource.data.storeId == resource.data.storeId
-        && request.resource.data.accountStatus == resource.data.accountStatus
+        && request.resource.data.accountStatus in ['pending', 'active']
         && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
-          'fullName', 'phone', 'photoURL', 'termsAccepted', 'updatedAt'
+          'fullName', 'phone', 'photoURL', 'termsAccepted',
+          'accountStatus', 'updatedAt'
         ]);
 
       allow delete: if false;
@@ -115,29 +138,28 @@ service cloud.firestore {
         && request.resource.data.isApproved == false
         && request.resource.data.status == 'pending_approval';
 
+      // Customers can discover approved stores. The app filters active/open stores.
       allow read: if merchantOwnsStore(storeId)
-        || (resource.data.isApproved == true && resource.data.status == 'active');
+        || resource.data.isApproved == true;
 
+      // isApproved/status remain writable for the existing MVP auto-approval script.
       allow update: if merchantOwnsStore(storeId)
         && request.resource.data.merchantId == resource.data.merchantId
-        && request.resource.data.isApproved == resource.data.isApproved
-        && request.resource.data.status == resource.data.status
         && request.resource.data.rating == resource.data.rating
         && request.resource.data.totalRatings == resource.data.totalRatings
+        && request.resource.data.isApproved is bool
+        && request.resource.data.status in ['pending_approval', 'active']
         && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
           'name', 'category', 'description', 'phone', 'address', 'location',
           'openingTime', 'closingTime', 'isOpen', 'minimumOrder',
-          'deliveryRadiusKm', 'updatedAt'
+          'deliveryRadiusKm', 'isApproved', 'status', 'updatedAt'
         ]);
 
       allow delete: if false;
 
       match /products/{productId} {
         allow read: if merchantOwnsStore(storeId)
-          || (publicStore(storeId)
-            && resource.data.isActive == true
-            && resource.data.isAvailable == true
-            && resource.data.stockQuantity > 0);
+          || publicStore(storeId);
 
         allow create: if merchantOwnsStore(storeId)
           && request.resource.data.storeId == storeId
@@ -155,8 +177,10 @@ service cloud.firestore {
 
       match /stockMovements/{movementId} {
         allow read: if merchantOwnsStore(storeId);
+
         allow create: if merchantOwnsStore(storeId)
           && request.resource.data.createdBy == request.auth.uid;
+
         allow update, delete: if false;
       }
     }
@@ -168,8 +192,13 @@ service cloud.firestore {
         && request.resource.data.assignedRiderId == null
         && request.resource.data.merchantId is string
         && request.resource.data.storeId is string
+        && publicStore(request.resource.data.storeId)
         && request.resource.data.items is list
         && request.resource.data.itemCount is number
+        && request.resource.data.itemCount > 0
+        && request.resource.data.subtotal is number
+        && request.resource.data.deliveryFee is number
+        && request.resource.data.platformFee is number
         && request.resource.data.totalAmount is number
         && request.resource.data.totalAmount >= 0;
 
