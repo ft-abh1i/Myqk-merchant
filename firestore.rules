@@ -1,0 +1,218 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function isOwner(uid) {
+      return signedIn() && request.auth.uid == uid;
+    }
+
+    function merchantExists() {
+      return signedIn() && exists(/databases/$(database)/documents/merchants/$(request.auth.uid));
+    }
+
+    function merchantProfile() {
+      return get(/databases/$(database)/documents/merchants/$(request.auth.uid));
+    }
+
+    function isOnboardedMerchant() {
+      return merchantExists() && merchantProfile().data.onboardingComplete == true;
+    }
+
+    function riderExists() {
+      return signedIn() && exists(/databases/$(database)/documents/riders/$(request.auth.uid));
+    }
+
+    function riderProfile() {
+      return get(/databases/$(database)/documents/riders/$(request.auth.uid));
+    }
+
+    function isOnboardedRider() {
+      return riderExists() && riderProfile().data.onboardingComplete == true;
+    }
+
+    function merchantOwnsStore(storeId) {
+      return isOnboardedMerchant()
+        && merchantProfile().data.storeId == storeId;
+    }
+
+    function customerOwnsOrder() {
+      return signedIn() && resource.data.customerId == request.auth.uid;
+    }
+
+    function merchantOwnsOrder() {
+      return isOnboardedMerchant()
+        && resource.data.merchantId == request.auth.uid
+        && resource.data.storeId == merchantProfile().data.storeId;
+    }
+
+    function assignedRiderOwnsOrder() {
+      return isOnboardedRider()
+        && resource.data.assignedRiderId == request.auth.uid;
+    }
+
+    function immutableOrderFieldsUnchanged() {
+      return request.resource.data.customerId == resource.data.customerId
+        && request.resource.data.merchantId == resource.data.merchantId
+        && request.resource.data.storeId == resource.data.storeId
+        && request.resource.data.orderNumber == resource.data.orderNumber
+        && request.resource.data.items == resource.data.items
+        && request.resource.data.itemCount == resource.data.itemCount
+        && request.resource.data.totalAmount == resource.data.totalAmount;
+    }
+
+    match /merchants/{merchantId} {
+      allow create: if isOwner(merchantId)
+        && request.resource.data.uid == request.auth.uid
+        && request.resource.data.onboardingComplete == true;
+
+      allow read: if isOwner(merchantId);
+
+      allow update: if isOwner(merchantId)
+        && request.resource.data.uid == request.auth.uid
+        && request.resource.data.storeId == resource.data.storeId;
+
+      allow delete: if false;
+    }
+
+    match /riders/{riderId} {
+      allow create, read, update: if isOwner(riderId);
+      allow delete: if false;
+    }
+
+    match /stores/{storeId} {
+      allow create: if signedIn()
+        && request.resource.data.merchantId == request.auth.uid;
+
+      allow read: if true;
+
+      allow update: if merchantOwnsStore(storeId)
+        && request.resource.data.merchantId == resource.data.merchantId;
+
+      allow delete: if false;
+
+      match /products/{productId} {
+        allow read: if true;
+
+        allow create: if merchantOwnsStore(storeId)
+          && request.resource.data.storeId == storeId
+          && request.resource.data.merchantId == request.auth.uid;
+
+        allow update: if merchantOwnsStore(storeId)
+          && resource.data.storeId == storeId
+          && resource.data.merchantId == request.auth.uid
+          && request.resource.data.storeId == resource.data.storeId
+          && request.resource.data.merchantId == resource.data.merchantId;
+
+        allow delete: if merchantOwnsStore(storeId)
+          && resource.data.merchantId == request.auth.uid;
+      }
+
+      match /stockMovements/{movementId} {
+        allow read: if merchantOwnsStore(storeId);
+        allow create: if merchantOwnsStore(storeId)
+          && request.resource.data.createdBy == request.auth.uid;
+        allow update, delete: if false;
+      }
+    }
+
+    match /orders/{orderId} {
+      allow create: if signedIn()
+        && request.resource.data.customerId == request.auth.uid
+        && request.resource.data.status == 'pending_merchant'
+        && request.resource.data.assignedRiderId == null
+        && request.resource.data.merchantId is string
+        && request.resource.data.storeId is string
+        && request.resource.data.items is list
+        && request.resource.data.itemCount is number
+        && request.resource.data.totalAmount is number;
+
+      allow get, list: if signedIn() && (
+        resource.data.customerId == request.auth.uid
+        || merchantOwnsOrder()
+        || (isOnboardedRider() && (
+          resource.data.status == 'ready_for_pickup'
+          || resource.data.assignedRiderId == request.auth.uid
+        ))
+      );
+
+      allow update: if customerOwnsOrder()
+        && resource.data.status == 'pending_merchant'
+        && resource.data.assignedRiderId == null
+        && request.resource.data.status == 'cancelled'
+        && request.resource.data.assignedRiderId == null
+        && immutableOrderFieldsUnchanged()
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          'status', 'cancelledAt', 'updatedAt'
+        ]);
+
+      allow update: if merchantOwnsOrder()
+        && resource.data.status == 'pending_merchant'
+        && request.resource.data.status in ['merchant_accepted', 'merchant_rejected']
+        && immutableOrderFieldsUnchanged()
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          'status', 'merchantAcceptedAt', 'merchantRejectedAt', 'updatedAt'
+        ]);
+
+      allow update: if merchantOwnsOrder()
+        && resource.data.status == 'merchant_accepted'
+        && request.resource.data.status == 'preparing'
+        && immutableOrderFieldsUnchanged()
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          'status', 'preparingAt', 'updatedAt'
+        ]);
+
+      allow update: if merchantOwnsOrder()
+        && resource.data.status == 'preparing'
+        && request.resource.data.status == 'ready_for_pickup'
+        && immutableOrderFieldsUnchanged()
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          'status', 'readyAt', 'updatedAt'
+        ]);
+
+      allow update: if isOnboardedRider()
+        && resource.data.status == 'ready_for_pickup'
+        && resource.data.assignedRiderId == null
+        && request.resource.data.status == 'accepted'
+        && request.resource.data.assignedRiderId == request.auth.uid
+        && immutableOrderFieldsUnchanged()
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          'status', 'assignedRiderId', 'assignedRiderName', 'acceptedAt', 'updatedAt'
+        ]);
+
+      allow update: if assignedRiderOwnsOrder()
+        && resource.data.status == 'accepted'
+        && request.resource.data.status == 'arrived_pickup'
+        && immutableOrderFieldsUnchanged()
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          'status', 'arrivedPickupAt', 'updatedAt'
+        ]);
+
+      allow update: if assignedRiderOwnsOrder()
+        && resource.data.status == 'arrived_pickup'
+        && request.resource.data.status == 'picked_up'
+        && immutableOrderFieldsUnchanged()
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          'status', 'pickedUpAt', 'updatedAt'
+        ]);
+
+      allow update: if assignedRiderOwnsOrder()
+        && resource.data.status == 'picked_up'
+        && request.resource.data.status == 'completed'
+        && immutableOrderFieldsUnchanged()
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          'status', 'completedAt', 'updatedAt'
+        ]);
+
+      allow delete: if false;
+    }
+
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}
