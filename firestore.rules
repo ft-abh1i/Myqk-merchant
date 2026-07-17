@@ -40,6 +40,12 @@ service cloud.firestore {
         && merchantProfile().data.storeId == storeId;
     }
 
+    function publicStore(storeId) {
+      return exists(/databases/$(database)/documents/stores/$(storeId))
+        && get(/databases/$(database)/documents/stores/$(storeId)).data.isApproved == true
+        && get(/databases/$(database)/documents/stores/$(storeId)).data.status == 'active';
+    }
+
     function customerOwnsOrder() {
       return signedIn() && resource.data.customerId == request.auth.uid;
     }
@@ -68,35 +74,70 @@ service cloud.firestore {
     match /merchants/{merchantId} {
       allow create: if isOwner(merchantId)
         && request.resource.data.uid == request.auth.uid
-        && request.resource.data.onboardingComplete == true;
+        && request.resource.data.onboardingComplete == true
+        && request.resource.data.accountStatus == 'pending';
 
       allow read: if isOwner(merchantId);
 
       allow update: if isOwner(merchantId)
-        && request.resource.data.uid == request.auth.uid
-        && request.resource.data.storeId == resource.data.storeId;
+        && request.resource.data.uid == resource.data.uid
+        && request.resource.data.storeId == resource.data.storeId
+        && request.resource.data.accountStatus == resource.data.accountStatus
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          'fullName', 'phone', 'photoURL', 'termsAccepted', 'updatedAt'
+        ]);
 
       allow delete: if false;
     }
 
     match /riders/{riderId} {
-      allow create, read, update: if isOwner(riderId);
+      allow create: if isOwner(riderId)
+        && request.resource.data.uid == request.auth.uid
+        && request.resource.data.onboardingComplete == true;
+
+      allow read: if isOwner(riderId);
+
+      allow update: if isOwner(riderId)
+        && request.resource.data.uid == resource.data.uid
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          'fullName', 'email', 'photoURL', 'phone', 'city',
+          'vehicleType', 'vehicleNumber', 'location',
+          'termsAccepted', 'termsAcceptedAt', 'onboardingComplete',
+          'status', 'isOnline', 'lastSeenAt', 'lastLocationAt', 'updatedAt'
+        ]);
+
       allow delete: if false;
     }
 
     match /stores/{storeId} {
       allow create: if signedIn()
-        && request.resource.data.merchantId == request.auth.uid;
+        && request.resource.data.merchantId == request.auth.uid
+        && request.resource.data.isApproved == false
+        && request.resource.data.status == 'pending_approval';
 
-      allow read: if true;
+      allow read: if merchantOwnsStore(storeId)
+        || (resource.data.isApproved == true && resource.data.status == 'active');
 
       allow update: if merchantOwnsStore(storeId)
-        && request.resource.data.merchantId == resource.data.merchantId;
+        && request.resource.data.merchantId == resource.data.merchantId
+        && request.resource.data.isApproved == resource.data.isApproved
+        && request.resource.data.status == resource.data.status
+        && request.resource.data.rating == resource.data.rating
+        && request.resource.data.totalRatings == resource.data.totalRatings
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          'name', 'category', 'description', 'phone', 'address', 'location',
+          'openingTime', 'closingTime', 'isOpen', 'minimumOrder',
+          'deliveryRadiusKm', 'updatedAt'
+        ]);
 
       allow delete: if false;
 
       match /products/{productId} {
-        allow read: if true;
+        allow read: if merchantOwnsStore(storeId)
+          || (publicStore(storeId)
+            && resource.data.isActive == true
+            && resource.data.isAvailable == true
+            && resource.data.stockQuantity > 0);
 
         allow create: if merchantOwnsStore(storeId)
           && request.resource.data.storeId == storeId
@@ -129,7 +170,8 @@ service cloud.firestore {
         && request.resource.data.storeId is string
         && request.resource.data.items is list
         && request.resource.data.itemCount is number
-        && request.resource.data.totalAmount is number;
+        && request.resource.data.totalAmount is number
+        && request.resource.data.totalAmount >= 0;
 
       allow get, list: if signedIn() && (
         resource.data.customerId == request.auth.uid
@@ -181,7 +223,16 @@ service cloud.firestore {
         && request.resource.data.assignedRiderId == request.auth.uid
         && immutableOrderFieldsUnchanged()
         && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
-          'status', 'assignedRiderId', 'assignedRiderName', 'acceptedAt', 'updatedAt'
+          'status', 'assignedRiderId', 'assignedRiderName',
+          'riderAcceptedAt', 'acceptedAt', 'updatedAt'
+        ]);
+
+      allow update: if assignedRiderOwnsOrder()
+        && resource.data.status in ['accepted', 'arrived_pickup', 'picked_up']
+        && request.resource.data.status == resource.data.status
+        && immutableOrderFieldsUnchanged()
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          'riderLocation', 'riderLocationUpdatedAt', 'updatedAt'
         ]);
 
       allow update: if assignedRiderOwnsOrder()
