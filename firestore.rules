@@ -58,7 +58,6 @@ service cloud.firestore {
 
     function merchantOwnsOrder() {
       return isOnboardedMerchant()
-        && resource.data.merchantId == request.auth.uid
         && resource.data.storeId == merchantProfile().data.storeId;
     }
 
