@@ -21,6 +21,16 @@
     .product-card-with-image { display: grid; grid-template-columns: 82px minmax(0, 1fr); gap: 12px; align-items: stretch; }
     .catalog-thumb { width: 82px; height: 82px; object-fit: cover; border-radius: 14px; background: #f3f4f6; }
     .product-card-body { min-width: 0; display: grid; gap: 10px; }
+    .location-block { display: grid; gap: 10px; margin-bottom: 16px; }
+    .location-manual-btn { width: 100%; border: 1px solid #d1d5db; background: #fff; color: #1f2937; border-radius: 15px; min-height: 48px; padding: 12px 16px; font-weight: 800; }
+    .manual-address-panel { border: 1px solid #e5e7eb; border-radius: 18px; padding: 14px; background: #fff; }
+    .manual-address-panel.hidden { display: none; }
+    .manual-address-panel label { margin-bottom: 8px; }
+    .manual-address-panel .image-hint { margin-top: 8px; }
+    .quick-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin: -8px 0 22px; }
+    .quick-actions button { border: 0; border-radius: 15px; padding: 13px 12px; min-height: 48px; font-weight: 800; }
+    .quick-actions .quick-primary { background: #f8cb46; color: #111827; }
+    .quick-actions .quick-secondary { background: #fff; color: #111827; border: 1px solid #e5e7eb; }
     @media (max-width: 380px) {
       .product-card-with-image { grid-template-columns: 68px minmax(0, 1fr); }
       .catalog-thumb { width: 68px; height: 68px; }
@@ -71,18 +81,24 @@
         </select>
       </label>
       <label>Business description<textarea id="shop-description" rows="3" maxlength="240" placeholder="What do you sell?"></textarea></label>
-      <label>Full shop address<textarea id="shop-address" rows="3" required maxlength="220"></textarea></label>
       <label class="image-field">Store cover photo
-        <input id="shop-image" type="file" accept="image/jpeg,image/png,image/webp">
+        <input id="shop-image" type="file" accept="image/jpeg,image/png,image/webp" required>
         <img id="shop-image-preview" class="image-preview" alt="Selected store cover preview">
-        <span id="shop-image-status" class="image-hint">Optional. JPG, PNG or WebP; compressed automatically.</span>
+        <span id="shop-image-status" class="image-hint">Required. JPG, PNG or WebP; compressed automatically.</span>
       </label>
       <div class="field-grid">
         <label>Opening time<input id="opening-time" type="time" value="08:00" required></label>
         <label>Closing time<input id="closing-time" type="time" value="22:00" required></label>
       </div>
-      <button id="location-btn" class="secondary-btn" type="button">Use current shop location</button>
-      <p id="location-status" class="hint">Location is required for rider pickup.</p>
+      <div class="location-block">
+        <button id="location-btn" class="secondary-btn" type="button">Use current shop location</button>
+        <button id="manual-address-btn" class="location-manual-btn" type="button">Add address manually</button>
+        <p id="location-status" class="hint">Use GPS to detect the shop area, or add the address manually.</p>
+        <div id="manual-address-panel" class="manual-address-panel hidden">
+          <label>Full shop address<textarea id="shop-address" rows="3" maxlength="220" placeholder="Shop number, street, area, landmark, city, PIN code"></textarea></label>
+          <p class="image-hint">Verify the detected address or enter the exact pickup address for riders.</p>
+        </div>
+      </div>
       <label class="check-row"><input id="terms-check" type="checkbox" required><span>I confirm the business details are correct and accept merchant terms.</span></label>
       <button id="complete-setup-btn" class="primary-btn" type="submit">Create business profile</button>
     </form>
@@ -97,6 +113,7 @@
       <section id="home-view" class="view active">
         <div class="hero-card"><div><small>TODAY'S SALES</small><h1 id="today-sales">₹0</h1><p id="today-summary">0 orders completed</p></div><div class="hero-chip">LIVE</div></div>
         <div class="stats-grid"><article><span>New orders</span><strong id="new-orders-count">0</strong></article><article><span>Preparing</span><strong id="preparing-count">0</strong></article><article><span>Products</span><strong id="products-count">0</strong></article><article><span>Low stock</span><strong id="low-stock-count">0</strong></article></div>
+        <div class="quick-actions"><button id="home-add-product-btn" class="quick-primary" type="button">Add product</button><button class="quick-secondary" data-go="inventory" type="button">View inventory</button></div>
         <div class="section-head"><div><small>LIVE ACTIVITY</small><h3>Recent orders</h3></div><button class="link-btn" data-go="orders">View all</button></div>
         <div id="recent-orders" class="stack-list empty-state">No merchant orders yet.</div>
       </section>
@@ -114,7 +131,7 @@
       </section>
 
       <section id="inventory-view" class="view">
-        <div class="section-head sticky-head"><div><small>STOCK CONTROL</small><h2>Inventory</h2></div></div>
+        <div class="section-head sticky-head"><div><small>STOCK CONTROL</small><h2>Inventory</h2></div><button id="add-inventory-product-btn" class="mini-primary">+ Add</button></div>
         <div class="inventory-tabs"><button class="filter active" data-stock-filter="all">All</button><button class="filter" data-stock-filter="low">Low stock</button><button class="filter" data-stock-filter="out">Out</button></div>
         <div id="inventory-list" class="stack-list"></div>
       </section>
@@ -152,7 +169,7 @@
         <label class="image-field">Product photo
           <input id="product-image" type="file" accept="image/jpeg,image/png,image/webp">
           <img id="product-image-preview" class="image-preview" alt="Selected product photo preview">
-          <span id="product-image-status" class="image-hint">Optional. One photo; compressed automatically.</span>
+          <span id="product-image-status" class="image-hint">Required for a new product. One photo; compressed automatically.</span>
         </label>
         <button class="primary-btn" type="submit">Save product</button>
       </form>
