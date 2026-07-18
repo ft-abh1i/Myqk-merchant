@@ -37,7 +37,8 @@ const state = {
   stockFilter: 'all',
   unsubProducts: null,
   unsubOrders: null,
-  location: null
+  location: null,
+  resolvedAddress: null
 };
 
 const IMAGE_RULES = {
@@ -217,12 +218,12 @@ async function uploadImage(file, { folder, kind, statusElement }) {
   }
 }
 
-function previewSelectedFile(input, preview, status) {
+function previewSelectedFile(input, preview, status, requiredText = 'JPG, PNG or WebP. The app compresses it before upload.') {
   const file = input.files?.[0];
   if (!file) {
     preview.removeAttribute('src');
     preview.classList.remove('visible');
-    status.textContent = 'JPG, PNG or WebP. The app compresses it before upload.';
+    status.textContent = requiredText;
     return;
   }
   try {
@@ -275,58 +276,183 @@ async function loadMerchant() {
   return Boolean(state.store);
 }
 
-function hydrateOnboarding() {
-  $('#owner-name').value = state.user.displayName || '';
-  state.location = null;
-  $('#shop-image').value = '';
-  $('#shop-image-preview').classList.remove('visible');
-  $('#shop-image-status').textContent = cloudinaryReady()
-    ? 'Optional. JPG, PNG or WebP; compressed automatically.'
-    : 'Optional for now. Add Cloudinary settings before uploading photos.';
+function openManualAddress(focus = false) {
+  $('#manual-address-panel').classList.remove('hidden');
+  $('#manual-address-btn').textContent = 'Address form opened';
+  if (focus) $('#shop-address').focus();
 }
 
-function requestLocation() {
-  if (!navigator.geolocation) return toast('Location is not supported.', true);
-  $('#location-status').textContent = 'Detecting location…';
-  navigator.geolocation.getCurrentPosition((position) => {
+function formatReverseAddress(result) {
+  const locality = result.locality || result.city || result.localityInfo?.administrative?.find((item) => item.adminLevel >= 8)?.name || '';
+  const city = result.city || result.localityInfo?.administrative?.find((item) => item.adminLevel === 6)?.name || '';
+  const stateName = result.principalSubdivision || result.localityInfo?.administrative?.find((item) => item.adminLevel === 4)?.name || '';
+  const postalCode = result.postcode || '';
+  const country = result.countryName || '';
+  const parts = [...new Set([locality, city, stateName, postalCode, country].filter(Boolean))];
+  return {
+    fullAddress: parts.join(', '),
+    locality,
+    city,
+    state: stateName,
+    postalCode,
+    country,
+    source: 'reverse_geocoding'
+  };
+}
+
+async function reverseGeocode(latitude, longitude) {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 15000);
+  try {
+    const params = new URLSearchParams({
+      latitude: String(latitude),
+      longitude: String(longitude),
+      localityLanguage: 'en'
+    });
+    const response = await fetch(`https://api.bigdatacloud.net/data/reverse-geocode-client?${params}`, {
+      signal: controller.signal,
+      headers: { Accept: 'application/json' }
+    });
+    if (!response.ok) throw new Error('Address lookup failed.');
+    const address = formatReverseAddress(await response.json());
+    if (!address.fullAddress) throw new Error('Exact address could not be detected.');
+    return address;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+function geolocationMessage(error) {
+  if (error?.code === 1) return 'Location access is blocked. Allow Location in browser/site settings, or add the address manually below.';
+  if (error?.code === 2) return 'Current location is unavailable. Turn on device Location/GPS, or add the address manually below.';
+  if (error?.code === 3) return 'Location detection timed out. Try again outside, or add the address manually below.';
+  return 'Location could not be detected. Add the address manually below.';
+}
+
+function getCurrentPosition() {
+  return new Promise((resolve, reject) => {
+    navigator.geolocation.getCurrentPosition(resolve, reject, {
+      enableHighAccuracy: true,
+      timeout: 18000,
+      maximumAge: 30000
+    });
+  });
+}
+
+async function requestLocation() {
+  const button = $('#location-btn');
+  if (!navigator.geolocation) {
+    $('#location-status').textContent = 'This browser does not support location. Add the shop address manually below.';
+    openManualAddress(true);
+    return;
+  }
+
+  setButtonBusy(button, true, 'Detecting location…', 'Use current shop location');
+  $('#location-status').textContent = 'Checking location permission…';
+
+  try {
+    if (navigator.permissions?.query) {
+      try {
+        const permission = await navigator.permissions.query({ name: 'geolocation' });
+        if (permission.state === 'denied') {
+          $('#location-status').textContent = 'Location access is blocked. Open browser/site settings and allow Location, or add the address manually.';
+          openManualAddress(true);
+          return;
+        }
+      } catch (permissionError) {
+        console.debug('Permissions API unavailable; using browser geolocation prompt.', permissionError);
+      }
+    }
+
+    const position = await getCurrentPosition();
     state.location = {
       latitude: Number(position.coords.latitude.toFixed(6)),
       longitude: Number(position.coords.longitude.toFixed(6)),
-      accuracy: Math.round(position.coords.accuracy)
+      accuracy: Math.round(position.coords.accuracy),
+      capturedAt: new Date().toISOString()
     };
-    $('#location-status').textContent = `Location saved: ${state.location.latitude}, ${state.location.longitude}`;
-    toast('Shop location added.');
-  }, () => {
+    $('#location-status').textContent = 'Location found. Fetching readable address…';
+
+    try {
+      state.resolvedAddress = await reverseGeocode(state.location.latitude, state.location.longitude);
+      $('#shop-address').value = state.resolvedAddress.fullAddress;
+      $('#shop-address').dataset.source = 'detected';
+      openManualAddress(false);
+      $('#location-status').textContent = `Detected: ${state.resolvedAddress.fullAddress}`;
+      toast('Shop location and address added.');
+    } catch (error) {
+      console.warn('Reverse geocoding failed:', error);
+      state.resolvedAddress = null;
+      $('#location-status').textContent = 'Location detected, but the readable address could not be fetched. Add the exact address manually below.';
+      openManualAddress(true);
+    }
+  } catch (error) {
+    console.warn('Geolocation failed:', error);
     state.location = null;
-    $('#location-status').textContent = 'Location permission denied.';
-    toast('Allow location access.', true);
-  }, { enableHighAccuracy: true, timeout: 12000, maximumAge: 60000 });
+    state.resolvedAddress = null;
+    $('#location-status').textContent = geolocationMessage(error);
+    openManualAddress(true);
+  } finally {
+    setButtonBusy(button, false, 'Detecting location…', 'Use current shop location');
+  }
+}
+
+function hydrateOnboarding() {
+  $('#owner-name').value = state.user.displayName || '';
+  state.location = null;
+  state.resolvedAddress = null;
+  $('#shop-address').value = '';
+  $('#shop-address').dataset.source = '';
+  $('#manual-address-panel').classList.add('hidden');
+  $('#manual-address-btn').textContent = 'Add address manually';
+  $('#location-status').textContent = 'Use GPS to detect the shop area, or add the address manually.';
+  $('#shop-image').value = '';
+  $('#shop-image-preview').classList.remove('visible');
+  $('#shop-image-status').textContent = cloudinaryReady()
+    ? 'Required. JPG, PNG or WebP; compressed automatically.'
+    : 'Cloudinary configuration is required before creating a store.';
 }
 
 async function createBusiness(event) {
   event.preventDefault();
   const phone = $('#owner-phone').value.replace(/\D/g, '');
+  const fullAddress = $('#shop-address').value.trim();
+  const storePhoto = $('#shop-image').files?.[0];
+
   if (!/^[6-9]\d{9}$/.test(phone)) return toast('Enter a valid 10-digit phone number.', true);
-  if (!state.location) return toast('Add current shop location.', true);
+  if (!fullAddress) {
+    openManualAddress(true);
+    return toast('Detect or enter the full shop address.', true);
+  }
+  if (!storePhoto) return toast('Add a store cover photo.', true);
 
   const button = $('#complete-setup-btn');
   setButtonBusy(button, true, 'Creating…', 'Create business profile');
 
   try {
     const storeReference = doc(collection(db, 'stores'));
-    const storeImage = await uploadImage($('#shop-image').files?.[0], {
+    const storeImage = await uploadImage(storePhoto, {
       folder: `myqk/stores/${storeReference.id}`,
       kind: 'store',
       statusElement: $('#shop-image-status')
     });
     const now = serverTimestamp();
+    const address = {
+      fullAddress,
+      locality: state.resolvedAddress?.locality || '',
+      city: state.resolvedAddress?.city || '',
+      state: state.resolvedAddress?.state || '',
+      postalCode: state.resolvedAddress?.postalCode || '',
+      country: state.resolvedAddress?.country || '',
+      source: state.resolvedAddress ? 'reverse_geocoding' : 'manual'
+    };
     const store = {
       merchantId: state.user.uid,
       name: $('#shop-name').value.trim(),
       category: $('#shop-category').value,
       description: $('#shop-description').value.trim(),
       phone,
-      address: { fullAddress: $('#shop-address').value.trim() },
+      address,
       location: state.location,
       openingTime: $('#opening-time').value,
       closingTime: $('#closing-time').value,
@@ -337,8 +463,8 @@ async function createBusiness(event) {
       deliveryRadiusKm: 8,
       rating: 0,
       totalRatings: 0,
-      imageUrl: storeImage?.imageUrl || '',
-      imagePublicId: storeImage?.imagePublicId || '',
+      imageUrl: storeImage.imageUrl,
+      imagePublicId: storeImage.imagePublicId,
       createdAt: now,
       updatedAt: now
     };
@@ -358,13 +484,25 @@ async function createBusiness(event) {
 
     await setDoc(storeReference, store);
     await setDoc(doc(db, 'merchants', state.user.uid), merchant);
-    state.merchant = merchant;
-    state.store = store;
+
+    let activated = false;
+    try {
+      await Promise.all([
+        updateDoc(doc(db, 'merchants', state.user.uid), { accountStatus: 'active', updatedAt: serverTimestamp() }),
+        updateDoc(storeReference, { isApproved: true, status: 'active', updatedAt: serverTimestamp() })
+      ]);
+      activated = true;
+    } catch (activationError) {
+      console.warn('Immediate store activation failed; auto-approve will retry:', activationError);
+    }
+
+    state.merchant = { ...merchant, accountStatus: activated ? 'active' : 'pending' };
+    state.store = { ...store, isApproved: activated, status: activated ? 'active' : 'pending_approval' };
     state.storeId = storeReference.id;
     hydrateApp();
     startRealtime();
     showScreen('app-screen');
-    toast('Business profile created.');
+    toast(activated ? 'Store created and published to the customer app.' : 'Store created. Publishing will retry automatically.');
   } catch (error) {
     console.error(error);
     toast(error.message || 'Business profile could not be created.', true);
@@ -426,7 +564,7 @@ async function saveStoreImage() {
     state.store.imagePublicId = uploaded.imagePublicId;
     $('#profile-store-image').src = uploaded.imageUrl;
     $('#store-image-update').value = '';
-    toast('Store photo updated.');
+    toast('Store photo updated on merchant and customer pages.');
   } catch (error) {
     console.error(error);
     toast(error.message || 'Store photo upload failed.', true);
@@ -484,10 +622,11 @@ function renderStats() {
 
 function productCard(product, inventory = false) {
   const currentStockState = stockState(product);
+  const image = `<img class="catalog-thumb${inventory ? ' inventory-thumb' : ''}" src="${safeImageUrl(product.imageUrl, product.name)}" alt="${escapeHtml(product.name)}">`;
   if (inventory) {
-    return `<article class="inventory-card"><div class="card-head"><div><h4>${escapeHtml(product.name)}</h4><p>${escapeHtml(product.unit || '')} · ${escapeHtml(product.category || '')}</p></div><span class="stock-chip ${currentStockState}">${currentStockState === 'ok' ? 'In stock' : currentStockState === 'low' ? 'Low stock' : 'Out of stock'}</span></div><div class="inventory-controls"><button data-stock="-1" data-id="${product.id}">−</button><strong>${Number(product.stockQuantity || 0)}</strong><button data-stock="1" data-id="${product.id}">+</button><span>${money(product.sellingPrice)}</span></div></article>`;
+    return `<article class="inventory-card product-card-with-image">${image}<div class="product-card-body"><div class="card-head"><div><h4>${escapeHtml(product.name)}</h4><p>${escapeHtml(product.unit || '')} · ${escapeHtml(product.category || '')}</p></div><span class="stock-chip ${currentStockState}">${currentStockState === 'ok' ? 'In stock' : currentStockState === 'low' ? 'Low stock' : 'Out of stock'}</span></div><div class="inventory-controls"><button data-stock="-1" data-id="${product.id}">−</button><strong>${Number(product.stockQuantity || 0)}</strong><button data-stock="1" data-id="${product.id}">+</button><span>${money(product.sellingPrice)}</span></div><div class="card-actions"><button data-edit-product="${product.id}">Edit product</button></div></div></article>`;
   }
-  return `<article class="product-card product-card-with-image"><img class="catalog-thumb" src="${safeImageUrl(product.imageUrl, product.name)}" alt="${escapeHtml(product.name)}"><div class="product-card-body"><div class="card-head"><div><h4>${escapeHtml(product.name)}</h4><p>${escapeHtml(product.brand || 'MyQK')} · ${escapeHtml(product.unit || '')}</p></div><div><div class="price">${money(product.sellingPrice)}</div><span class="stock-chip ${currentStockState}">${Number(product.stockQuantity || 0)} left</span></div></div><div class="card-actions"><button data-edit-product="${product.id}">Edit</button><button data-toggle-product="${product.id}" class="${product.isActive === false ? 'danger' : ''}">${product.isActive === false ? 'Activate' : 'Disable'}</button></div></div></article>`;
+  return `<article class="product-card product-card-with-image">${image}<div class="product-card-body"><div class="card-head"><div><h4>${escapeHtml(product.name)}</h4><p>${escapeHtml(product.brand || 'MyQK')} · ${escapeHtml(product.unit || '')}</p></div><div><div class="price">${money(product.sellingPrice)}</div><span class="stock-chip ${currentStockState}">${Number(product.stockQuantity || 0)} left</span></div></div><div class="card-actions"><button data-edit-product="${product.id}">Edit</button><button data-toggle-product="${product.id}" class="${product.isActive === false ? 'danger' : ''}">${product.isActive === false ? 'Activate' : 'Disable'}</button></div></div></article>`;
 }
 
 function renderProducts() {
@@ -539,8 +678,8 @@ function resetProductForm() {
   $('#product-image-preview').removeAttribute('src');
   $('#product-image-preview').classList.remove('visible');
   $('#product-image-status').textContent = cloudinaryReady()
-    ? 'Optional. One photo; compressed automatically.'
-    : 'Optional for now. Add Cloudinary settings before uploading photos.';
+    ? 'Required for a new product. One photo; compressed automatically.'
+    : 'Cloudinary configuration is required before adding a product.';
 }
 
 function editProduct(id) {
@@ -559,7 +698,7 @@ function editProduct(id) {
   $('#product-image').value = '';
   $('#product-image-preview').src = safeImageUrl(product.imageUrl, product.name);
   $('#product-image-preview').classList.add('visible');
-  $('#product-image-status').textContent = product.imageUrl ? 'Current photo. Choose another photo to replace it.' : 'No photo yet.';
+  $('#product-image-status').textContent = product.imageUrl ? 'Current photo. Choose another photo only to replace it.' : 'This product has no photo. Add one before saving.';
   $('#product-modal-title').textContent = 'Edit product';
   openModal('product-modal');
 }
@@ -567,6 +706,7 @@ function editProduct(id) {
 async function saveProduct(event) {
   event.preventDefault();
   const id = $('#product-id').value;
+  const imageFile = $('#product-image').files?.[0];
   const productReference = id
     ? doc(db, 'stores', state.storeId, 'products', id)
     : doc(collection(db, 'stores', state.storeId, 'products'));
@@ -574,15 +714,18 @@ async function saveProduct(event) {
   const sellingPrice = Number($('#product-price').value);
   const mrp = Number($('#product-mrp').value);
   if (sellingPrice > mrp) return toast('Selling price cannot be higher than MRP.', true);
+  if (!id && !imageFile) return toast('Add a product photo.', true);
+  if (id && !existing?.imageUrl && !imageFile) return toast('Add a product photo.', true);
 
   const submitButton = $('#product-form button[type="submit"]');
   setButtonBusy(submitButton, true, 'Saving…', 'Save product');
   try {
-    const uploaded = await uploadImage($('#product-image').files?.[0], {
+    const uploaded = await uploadImage(imageFile, {
       folder: `myqk/stores/${state.storeId}/products/${productReference.id}`,
       kind: 'product',
       statusElement: $('#product-image-status')
     });
+    const stockQuantity = Number($('#product-stock').value);
     const data = {
       storeId: state.storeId,
       merchantId: state.user.uid,
@@ -592,20 +735,20 @@ async function saveProduct(event) {
       unit: $('#product-unit').value.trim(),
       mrp,
       sellingPrice,
-      stockQuantity: Number($('#product-stock').value),
+      stockQuantity,
       lowStockThreshold: Number($('#product-threshold').value),
       description: $('#product-description').value.trim(),
       imageUrl: uploaded?.imageUrl || existing?.imageUrl || '',
       imagePublicId: uploaded?.imagePublicId || existing?.imagePublicId || '',
       isActive: existing?.isActive === false ? false : true,
-      isAvailable: Number($('#product-stock').value) > 0,
+      isAvailable: stockQuantity > 0,
       updatedAt: serverTimestamp()
     };
 
     if (id) await updateDoc(productReference, data);
     else await setDoc(productReference, { ...data, createdAt: serverTimestamp() });
     closeModal('product-modal');
-    toast(id ? 'Product updated.' : 'Product added.');
+    toast(id ? 'Product updated on merchant and customer pages.' : 'Product added to inventory and customer app.');
   } catch (error) {
     console.error(error);
     toast(error.message || 'Product save failed.', true);
@@ -700,6 +843,11 @@ function switchView(name) {
   $('#main-content').scrollTop = 0;
 }
 
+function openAddProduct() {
+  resetProductForm();
+  openModal('product-modal');
+}
+
 document.addEventListener('click', (event) => {
   const close = event.target.closest('[data-close-modal]');
   if (close) closeModal(close.dataset.closeModal);
@@ -724,14 +872,41 @@ $('#logout-btn').addEventListener('click', logout);
 $('#onboarding-logout-btn').addEventListener('click', logout);
 $('#business-form').addEventListener('submit', createBusiness);
 $('#location-btn').addEventListener('click', requestLocation);
+$('#manual-address-btn').addEventListener('click', () => openManualAddress(true));
+$('#shop-address').addEventListener('input', () => {
+  if ($('#shop-address').dataset.source === 'detected') {
+    state.resolvedAddress = null;
+  }
+  $('#shop-address').dataset.source = 'manual';
+  $('#location-status').textContent = state.location
+    ? 'Location pin saved. The address was edited manually.'
+    : 'Manual shop address added.';
+});
 $('#shop-toggle').addEventListener('click', toggleShop);
 $('#save-store-image-btn').addEventListener('click', saveStoreImage);
-$('#add-product-btn').addEventListener('click', () => { resetProductForm(); openModal('product-modal'); });
+$('#add-product-btn').addEventListener('click', openAddProduct);
+$('#add-inventory-product-btn').addEventListener('click', openAddProduct);
+$('#home-add-product-btn').addEventListener('click', openAddProduct);
 $('#product-form').addEventListener('submit', saveProduct);
 $('#product-search').addEventListener('input', (event) => { state.productFilter = event.target.value; renderProducts(); });
-$('#shop-image').addEventListener('change', () => previewSelectedFile($('#shop-image'), $('#shop-image-preview'), $('#shop-image-status')));
-$('#product-image').addEventListener('change', () => previewSelectedFile($('#product-image'), $('#product-image-preview'), $('#product-image-status')));
-$('#store-image-update').addEventListener('change', () => previewSelectedFile($('#store-image-update'), $('#profile-store-image'), $('#store-image-update-status')));
+$('#shop-image').addEventListener('change', () => previewSelectedFile(
+  $('#shop-image'),
+  $('#shop-image-preview'),
+  $('#shop-image-status'),
+  'Required. JPG, PNG or WebP; compressed automatically.'
+));
+$('#product-image').addEventListener('change', () => previewSelectedFile(
+  $('#product-image'),
+  $('#product-image-preview'),
+  $('#product-image-status'),
+  $('#product-id').value ? 'Choose a photo only to replace the current one.' : 'Required for a new product.'
+));
+$('#store-image-update').addEventListener('change', () => previewSelectedFile(
+  $('#store-image-update'),
+  $('#profile-store-image'),
+  $('#store-image-update-status'),
+  'Choose a new cover photo and save.'
+));
 $$('[data-filter]').forEach((button) => button.addEventListener('click', () => {
   $$('[data-filter]').forEach((item) => item.classList.remove('active'));
   button.classList.add('active');
