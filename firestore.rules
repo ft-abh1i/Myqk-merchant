@@ -151,7 +151,8 @@ service cloud.firestore {
         && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
           'name', 'category', 'description', 'phone', 'address', 'location',
           'openingTime', 'closingTime', 'isOpen', 'minimumOrder',
-          'deliveryRadiusKm', 'isApproved', 'status', 'updatedAt'
+          'deliveryRadiusKm', 'imageUrl', 'imagePublicId',
+          'isApproved', 'status', 'updatedAt'
         ]);
 
       allow delete: if false;
