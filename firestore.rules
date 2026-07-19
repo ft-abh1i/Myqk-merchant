@@ -212,7 +212,10 @@ service cloud.firestore {
       );
 
       allow update: if customerOwnsOrder()
-        && resource.data.status == 'pending_merchant'
+        && resource.data.status in [
+          'pending_merchant', 'merchant_accepted',
+          'preparing', 'ready_for_pickup'
+        ]
         && resource.data.assignedRiderId == null
         && request.resource.data.status == 'cancelled'
         && request.resource.data.assignedRiderId == null
