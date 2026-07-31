@@ -1,0 +1,62 @@
+name: Use scheduled merchant auto-activation
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/use-scheduled-auto-activation.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Keep onboarding compatible with deployed Firestore rules
+        shell: python
+        run: |
+          from pathlib import Path
+
+          path = Path('app.js')
+          text = path.read_text()
+          start = text.index('    const store = {')
+          end = text.index('    const batch = writeBatch(db);', start)
+          before, block, after = text[:start], text[start:end], text[end:]
+
+          replacements = [
+            ('      isApproved: true,', '      isApproved: false,'),
+            ("      status: 'active',", "      status: 'pending_approval',"),
+            ("      accountStatus: 'active',", "      accountStatus: 'pending',"),
+          ]
+          for old, new in replacements:
+            if old not in block:
+              raise SystemExit(f'Missing merchant onboarding field: {old}')
+            block = block.replace(old, new, 1)
+
+          text = before + block + after
+          text = text.replace(
+            "    toast('Store created and activated successfully.');",
+            "    toast('Store created. It will activate automatically shortly.');",
+            1,
+          )
+          path.write_text(text)
+
+      - name: Verify merchant onboarding compatibility
+        run: |
+          grep -q "isApproved: false" app.js
+          grep -q "status: 'pending_approval'" app.js
+          grep -q "accountStatus: 'pending'" app.js
+          grep -q "activate automatically shortly" app.js
+
+      - name: Commit merchant auto-activation flow
+        run: |
+          rm -f .github/workflows/use-scheduled-auto-activation.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add app.js .github/workflows/use-scheduled-auto-activation.yml
+          git commit -m "Use automatic scheduled merchant activation"
+          git push
