@@ -1,0 +1,22 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Check JavaScript
+        run: for file in *.js; do node --check "$file"; done
+      - name: Check Firebase JSON
+        run: node -e "for (const file of ['firebase.json', 'firestore.indexes.json']) JSON.parse(require('fs').readFileSync(file, 'utf8'))"
