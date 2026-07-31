@@ -16,6 +16,7 @@ import {
   serverTimestamp,
   setDoc,
   updateDoc,
+  writeBatch,
   where
 } from 'https://www.gstatic.com/firebasejs/10.12.5/firebase-firestore.js';
 
@@ -32,13 +33,16 @@ const state = {
   storeId: null,
   products: [],
   orders: [],
+  todayCompleted: [],
   productFilter: '',
   orderFilter: 'all',
   stockFilter: 'all',
   unsubProducts: null,
   unsubOrders: null,
+  unsubToday: null,
   location: null,
-  resolvedAddress: null
+  resolvedAddress: null,
+  reconcilingOrders: new Set()
 };
 
 const IMAGE_RULES = {
@@ -61,6 +65,33 @@ function showScreen(id) {
 
 function money(value) {
   return `₹${Number(value || 0).toLocaleString('en-IN')}`;
+}
+
+function validCoordinates(value) {
+  if (!value || typeof value !== 'object') return false;
+  const latitude = Number(value.latitude ?? value.lat);
+  const longitude = Number(value.longitude ?? value.lng);
+  return Number.isFinite(latitude)
+    && Number.isFinite(longitude)
+    && latitude >= -90
+    && latitude <= 90
+    && longitude >= -180
+    && longitude <= 180;
+}
+
+function distanceKm(first, second) {
+  if (!validCoordinates(first) || !validCoordinates(second)) return Infinity;
+  const lat1 = Number(first.latitude ?? first.lat);
+  const lon1 = Number(first.longitude ?? first.lng);
+  const lat2 = Number(second.latitude ?? second.lat);
+  const lon2 = Number(second.longitude ?? second.lng);
+  const radians = (value) => value * Math.PI / 180;
+  const latitudeDistance = radians(lat2 - lat1);
+  const longitudeDistance = radians(lon2 - lon1);
+  const calculation = Math.sin(latitudeDistance / 2) ** 2
+    + Math.cos(radians(lat1)) * Math.cos(radians(lat2))
+    * Math.sin(longitudeDistance / 2) ** 2;
+  return 6371 * 2 * Math.atan2(Math.sqrt(calculation), Math.sqrt(1 - calculation));
 }
 
 function escapeHtml(value = '') {
@@ -263,6 +294,7 @@ async function login() {
 async function logout() {
   state.unsubProducts?.();
   state.unsubOrders?.();
+  state.unsubToday?.();
   await signOut(auth);
 }
 
@@ -317,6 +349,52 @@ async function reverseGeocode(latitude, longitude) {
     const address = formatReverseAddress(await response.json());
     if (!address.fullAddress) throw new Error('Exact address could not be detected.');
     return address;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+async function forwardGeocode(fullAddress) {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 15000);
+  try {
+    const params = new URLSearchParams({
+      q: fullAddress,
+      format: 'jsonv2',
+      addressdetails: '1',
+      limit: '1',
+      countrycodes: 'in'
+    });
+    const response = await fetch(`https://nominatim.openstreetmap.org/search?${params}`, {
+      signal: controller.signal,
+      headers: { Accept: 'application/json', 'Accept-Language': 'en-IN,en;q=0.8' }
+    });
+    if (!response.ok) throw new Error('Address verification failed.');
+    const result = (await response.json())?.[0];
+    const latitude = Number(result?.lat);
+    const longitude = Number(result?.lon);
+    if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) {
+      throw new Error('Shop address was not found. Add area, city, state and PIN code.');
+    }
+
+    const details = result.address || {};
+    return {
+      location: {
+        latitude: Number(latitude.toFixed(6)),
+        longitude: Number(longitude.toFixed(6)),
+        accuracy: null,
+        capturedAt: new Date().toISOString()
+      },
+      address: {
+        fullAddress,
+        locality: details.suburb || details.neighbourhood || details.village || '',
+        city: details.city || details.town || details.county || '',
+        state: details.state || '',
+        postalCode: details.postcode || '',
+        country: details.country || 'India',
+        source: 'forward_geocoding'
+      }
+    };
   } finally {
     clearTimeout(timeout);
   }
@@ -430,6 +508,14 @@ async function createBusiness(event) {
   setButtonBusy(button, true, 'Creating…', 'Create business profile');
 
   try {
+    if (!state.location || $('#shop-address').dataset.source === 'manual') {
+      $('#location-status').textContent = 'Verifying the manual address…';
+      const geocoded = await forwardGeocode(fullAddress);
+      state.location = geocoded.location;
+      state.resolvedAddress = geocoded.address;
+      $('#location-status').textContent = 'Address verified and map pin added.';
+    }
+
     const storeReference = doc(collection(db, 'stores'));
     const storeImage = await uploadImage(storePhoto, {
       folder: `myqk/stores/${storeReference.id}`,
@@ -444,7 +530,7 @@ async function createBusiness(event) {
       state: state.resolvedAddress?.state || '',
       postalCode: state.resolvedAddress?.postalCode || '',
       country: state.resolvedAddress?.country || '',
-      source: state.resolvedAddress ? 'reverse_geocoding' : 'manual'
+      source: state.resolvedAddress?.source || 'manual'
     };
     const store = {
       merchantId: state.user.uid,
@@ -482,27 +568,18 @@ async function createBusiness(event) {
       updatedAt: now
     };
 
-    await setDoc(storeReference, store);
-    await setDoc(doc(db, 'merchants', state.user.uid), merchant);
+    const batch = writeBatch(db);
+    batch.set(storeReference, store);
+    batch.set(doc(db, 'merchants', state.user.uid), merchant);
+    await batch.commit();
 
-    let activated = false;
-    try {
-      await Promise.all([
-        updateDoc(doc(db, 'merchants', state.user.uid), { accountStatus: 'active', updatedAt: serverTimestamp() }),
-        updateDoc(storeReference, { isApproved: true, status: 'active', updatedAt: serverTimestamp() })
-      ]);
-      activated = true;
-    } catch (activationError) {
-      console.warn('Immediate store activation failed; auto-approve will retry:', activationError);
-    }
-
-    state.merchant = { ...merchant, accountStatus: activated ? 'active' : 'pending' };
-    state.store = { ...store, isApproved: activated, status: activated ? 'active' : 'pending_approval' };
+    state.merchant = merchant;
+    state.store = store;
     state.storeId = storeReference.id;
     hydrateApp();
     startRealtime();
     showScreen('app-screen');
-    toast(activated ? 'Store created and published to the customer app.' : 'Store created. Publishing will retry automatically.');
+    toast('Store created and sent for admin approval.');
   } catch (error) {
     console.error(error);
     toast(error.message || 'Business profile could not be created.', true);
@@ -576,6 +653,7 @@ async function saveStoreImage() {
 function startRealtime() {
   state.unsubProducts?.();
   state.unsubOrders?.();
+  state.unsubToday?.();
   state.unsubProducts = onSnapshot(
     query(collection(db, 'stores', state.storeId, 'products'), orderBy('createdAt', 'desc')),
     (snapshot) => {
@@ -588,15 +666,46 @@ function startRealtime() {
     }
   );
   state.unsubOrders = onSnapshot(
-    query(collection(db, 'orders'), where('storeId', '==', state.storeId), limit(50)),
+    query(
+      collection(db, 'orders'),
+      where('storeId', '==', state.storeId),
+      orderBy('createdAt', 'desc'),
+      limit(50)
+    ),
     (snapshot) => {
-      state.orders = snapshot.docs.map((item) => ({ id: item.id, ...item.data() }))
-        .sort((a, b) => (b.createdAt?.seconds || 0) - (a.createdAt?.seconds || 0));
+      state.orders = snapshot.docs.map((item) => ({ id: item.id, ...item.data() }));
       renderAll();
+      state.orders
+        .filter((order) => (
+          order.status === 'cancelled'
+          && order.inventoryReserved === true
+          && order.inventoryRestored !== true
+        ))
+        .forEach((order) => reconcileCancelledInventory(order.id));
     },
     (error) => {
       console.error(error);
       toast('Orders could not load. Firestore rules or index may be missing.', true);
+    }
+  );
+  const startOfToday = new Date();
+  startOfToday.setHours(0, 0, 0, 0);
+  state.unsubToday = onSnapshot(
+    query(
+      collection(db, 'orders'),
+      where('storeId', '==', state.storeId),
+      where('status', '==', 'completed'),
+      where('completedAt', '>=', startOfToday),
+      orderBy('completedAt', 'desc'),
+      limit(500)
+    ),
+    (snapshot) => {
+      state.todayCompleted = snapshot.docs.map((item) => ({ id: item.id, ...item.data() }));
+      renderStats();
+    },
+    (error) => {
+      console.error('Today sales listener failed:', error);
+      toast('Today sales could not load. Firestore index may be missing.', true);
     }
   );
 }
@@ -610,7 +719,16 @@ function renderAll() {
 }
 
 function renderStats() {
-  const completed = state.orders.filter((order) => order.status === 'completed');
+  const startOfToday = new Date();
+  startOfToday.setHours(0, 0, 0, 0);
+  const completed = state.todayCompleted.filter((order) => {
+    if (order.status !== 'completed') return false;
+    const timestamp = order.completedAt || order.updatedAt;
+    const completedAt = typeof timestamp?.toMillis === 'function'
+      ? timestamp.toMillis()
+      : Number(timestamp?.seconds || 0) * 1000;
+    return completedAt >= startOfToday.getTime();
+  });
   const sales = completed.reduce((sum, order) => sum + Number(order.subtotal || order.totalAmount || 0), 0);
   $('#today-sales').textContent = money(sales);
   $('#today-summary').textContent = `${completed.length} orders completed`;
@@ -823,7 +941,110 @@ async function orderAction(id, next) {
       };
       if (!allowed[order.status]?.includes(next)) throw new Error('INVALID_STATUS');
       const update = { status: next, updatedAt: serverTimestamp() };
-      if (next === 'merchant_accepted') update.merchantAcceptedAt = serverTimestamp();
+      if (next === 'merchant_accepted') {
+        if (order.inventoryReserved === true) {
+          update.merchantAcceptedAt = serverTimestamp();
+        } else {
+          const storeSnapshot = await transaction.get(doc(db, 'stores', state.storeId));
+          if (!storeSnapshot.exists()) throw new Error('STORE_NOT_FOUND');
+          const store = storeSnapshot.data();
+          if (store.isApproved !== true || store.status !== 'active') {
+            throw new Error('STORE_NOT_APPROVED');
+          }
+          const deliveryDistance = distanceKm(
+            store.location,
+            order.drop?.location || order.dropLocation
+          );
+          const deliveryRadius = Number(store.deliveryRadiusKm || 0);
+          if (
+            !Number.isFinite(deliveryDistance)
+            || (deliveryRadius > 0 && deliveryDistance > deliveryRadius)
+          ) {
+            throw new Error('OUT_OF_DELIVERY_RADIUS');
+          }
+
+          const quantities = new Map();
+          for (const item of order.items || []) {
+            const productId = String(item.productId || '');
+            const quantity = Number(item.quantity);
+            if (!productId || !Number.isInteger(quantity) || quantity <= 0) {
+              throw new Error('INVALID_ORDER_ITEMS');
+            }
+            quantities.set(productId, (quantities.get(productId) || 0) + quantity);
+          }
+          if (!quantities.size) throw new Error('INVALID_ORDER_ITEMS');
+
+          const productReferences = [...quantities.keys()].map((productId) => (
+            doc(db, 'stores', state.storeId, 'products', productId)
+          ));
+          const productSnapshots = await Promise.all(
+            productReferences.map((productReference) => transaction.get(productReference))
+          );
+          const products = new Map(
+            productSnapshots.map((productSnapshot) => [productSnapshot.id, productSnapshot])
+          );
+
+          let verifiedSubtotal = 0;
+          for (const item of order.items) {
+            const productSnapshot = products.get(String(item.productId || ''));
+            if (!productSnapshot?.exists()) throw new Error('PRODUCT_NOT_FOUND');
+            const product = productSnapshot.data();
+            const unitPrice = Number(item.unitPrice);
+            const currentPrice = Number(product.sellingPrice);
+            const quantity = Number(item.quantity);
+            if (product.isActive === false || product.isAvailable === false) {
+              throw new Error(`${product.name || 'Product'} is unavailable`);
+            }
+            if (!Number.isFinite(unitPrice) || Math.abs(unitPrice - currentPrice) > 0.001) {
+              throw new Error(`${product.name || 'Product'} price changed`);
+            }
+            verifiedSubtotal += currentPrice * quantity;
+          }
+
+          const deliveryFee = verifiedSubtotal >= 299 ? 0 : 25;
+          const platformFee = 3;
+          const totalAmount = verifiedSubtotal + deliveryFee + platformFee;
+          if (
+            verifiedSubtotal < Number(store.minimumOrder || 0)
+            || Math.abs(Number(order.subtotal) - verifiedSubtotal) > 0.01
+            || Math.abs(Number(order.deliveryFee) - deliveryFee) > 0.01
+            || Math.abs(Number(order.platformFee) - platformFee) > 0.01
+            || Math.abs(Number(order.totalAmount) - totalAmount) > 0.01
+          ) {
+            throw new Error('ORDER_TOTAL_MISMATCH');
+          }
+
+          for (const [productId, quantity] of quantities) {
+            const productSnapshot = products.get(productId);
+            const product = productSnapshot.data();
+            const before = Number(product.stockQuantity || 0);
+            if (!Number.isInteger(before) || before < quantity) {
+              throw new Error(`${product.name || 'Product'} is out of stock`);
+            }
+            const after = before - quantity;
+            transaction.update(productSnapshot.ref, {
+              stockQuantity: after,
+              isAvailable: after > 0,
+              updatedAt: serverTimestamp()
+            });
+            transaction.set(doc(collection(db, 'stores', state.storeId, 'stockMovements')), {
+              productId,
+              orderId: id,
+              type: 'order_reserved',
+              quantityChange: -quantity,
+              previousStock: before,
+              newStock: after,
+              createdBy: state.user.uid,
+              createdAt: serverTimestamp()
+            });
+          }
+
+          update.inventoryReserved = true;
+          update.inventoryRestored = false;
+          update.inventoryReservedAt = serverTimestamp();
+          update.merchantAcceptedAt = serverTimestamp();
+        }
+      }
       if (next === 'merchant_rejected') update.merchantRejectedAt = serverTimestamp();
       if (next === 'preparing') update.preparingAt = serverTimestamp();
       if (next === 'ready_for_pickup') update.readyAt = serverTimestamp();
@@ -833,7 +1054,86 @@ async function orderAction(id, next) {
     toast(`Order marked ${statusLabel(next)}.`);
   } catch (error) {
     console.error(error);
-    toast('Order status update failed.', true);
+    const message = String(error?.message || '');
+    toast(
+      /out of stock|unavailable|price changed|ORDER_TOTAL_MISMATCH|OUT_OF_DELIVERY_RADIUS/.test(message)
+        ? `Order cannot be accepted: ${message
+          .replace('ORDER_TOTAL_MISMATCH', 'bill details are invalid')
+          .replace('OUT_OF_DELIVERY_RADIUS', 'delivery address is outside the store area')}.`
+        : 'Order status update failed.',
+      true
+    );
+  }
+}
+
+async function reconcileCancelledInventory(id) {
+  if (state.reconcilingOrders.has(id)) return;
+  state.reconcilingOrders.add(id);
+  const orderReference = doc(db, 'orders', id);
+
+  try {
+    await runTransaction(db, async (transaction) => {
+      const orderSnapshot = await transaction.get(orderReference);
+      if (!orderSnapshot.exists()) return;
+      const order = orderSnapshot.data();
+      if (
+        order.storeId !== state.storeId
+        || order.status !== 'cancelled'
+        || order.inventoryReserved !== true
+        || order.inventoryRestored === true
+      ) return;
+
+      const quantities = new Map();
+      for (const item of order.items || []) {
+        const productId = String(item.productId || '');
+        const quantity = Number(item.quantity);
+        if (!productId || !Number.isInteger(quantity) || quantity <= 0) {
+          throw new Error('INVALID_ORDER_ITEMS');
+        }
+        quantities.set(productId, (quantities.get(productId) || 0) + quantity);
+      }
+
+      const productReferences = [...quantities.keys()].map((productId) => (
+        doc(db, 'stores', state.storeId, 'products', productId)
+      ));
+      const productSnapshots = await Promise.all(
+        productReferences.map((productReference) => transaction.get(productReference))
+      );
+      if (productSnapshots.some((productSnapshot) => !productSnapshot.exists())) {
+        throw new Error('PRODUCT_NOT_FOUND');
+      }
+
+      for (const productSnapshot of productSnapshots) {
+        const quantity = quantities.get(productSnapshot.id);
+        const before = Number(productSnapshot.data().stockQuantity || 0);
+        const after = before + quantity;
+        transaction.update(productSnapshot.ref, {
+          stockQuantity: after,
+          isAvailable: true,
+          updatedAt: serverTimestamp()
+        });
+        transaction.set(doc(collection(db, 'stores', state.storeId, 'stockMovements')), {
+          productId: productSnapshot.id,
+          orderId: id,
+          type: 'order_cancelled_restore',
+          quantityChange: quantity,
+          previousStock: before,
+          newStock: after,
+          createdBy: state.user.uid,
+          createdAt: serverTimestamp()
+        });
+      }
+
+      transaction.update(orderReference, {
+        inventoryRestored: true,
+        inventoryRestoredAt: serverTimestamp(),
+        updatedAt: serverTimestamp()
+      });
+    });
+  } catch (error) {
+    console.error('Cancelled order inventory restoration failed:', error);
+  } finally {
+    state.reconcilingOrders.delete(id);
   }
 }
 

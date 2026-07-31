@@ -19,8 +19,14 @@ Use the shared Firebase project `buyqk-rider`.
 
 1. Enable Google authentication.
 2. Add the deployed merchant domain to Firebase Authorized domains.
-3. Publish `firestore.rules` in Firestore Database → Rules.
-4. Deploy the repository to Vercel.
+3. Deploy rules and indexes with `firebase deploy --only firestore`.
+4. Approve new stores from a trusted Admin SDK service or Firebase Console by
+   setting the merchant `accountStatus` to `active`, then the store
+   `isApproved` to `true` and `status` to `active`.
+5. Deploy the repository to Vercel.
+
+Merchants cannot approve their own accounts. A web admin panel must use an
+`admin: true` Firebase Auth custom claim set by a trusted server.
 
 ## Required order shape
 
