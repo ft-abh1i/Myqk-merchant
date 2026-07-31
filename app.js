@@ -543,8 +543,8 @@ async function createBusiness(event) {
       openingTime: $('#opening-time').value,
       closingTime: $('#closing-time').value,
       isOpen: true,
-      isApproved: true,
-      status: 'active',
+      isApproved: false,
+      status: 'pending_approval',
       minimumOrder: 99,
       deliveryRadiusKm: 8,
       rating: 0,
@@ -562,7 +562,7 @@ async function createBusiness(event) {
       phone,
       storeId: storeReference.id,
       onboardingComplete: true,
-      accountStatus: 'active',
+      accountStatus: 'pending',
       termsAccepted: true,
       createdAt: now,
       updatedAt: now
@@ -579,7 +579,7 @@ async function createBusiness(event) {
     hydrateApp();
     startRealtime();
     showScreen('app-screen');
-    toast('Store created and activated successfully.');
+    toast('Store created. It will activate automatically shortly.');
   } catch (error) {
     console.error(error);
     toast(error.message || 'Business profile could not be created.', true);
