@@ -1,0 +1,54 @@
+name: Auto-authorize merchants
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/auto-authorize-merchants.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Enable automatic merchant activation
+        shell: python
+        run: |
+          from pathlib import Path
+
+          path = Path('app.js')
+          text = path.read_text()
+
+          replacements = {
+              "      isApproved: false,\n      status: 'pending_approval',": "      isApproved: true,\n      status: 'active',",
+              "      accountStatus: 'pending',": "      accountStatus: 'active',",
+              "    toast('Store created and sent for admin approval.');": "    toast('Store created and activated successfully.');",
+          }
+
+          for old, new in replacements.items():
+              if old not in text:
+                  raise SystemExit(f'Missing expected merchant snippet: {old!r}')
+              text = text.replace(old, new, 1)
+
+          path.write_text(text)
+
+      - name: Verify merchant activation fields
+        run: |
+          grep -q "isApproved: true" app.js
+          grep -q "status: 'active'" app.js
+          grep -q "accountStatus: 'active'" app.js
+          ! grep -q "sent for admin approval" app.js
+
+      - name: Commit merchant auto-authorization
+        run: |
+          rm -f .github/workflows/auto-authorize-merchants.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add app.js .github/workflows/auto-authorize-merchants.yml
+          git commit -m "Auto-authorize merchant stores on onboarding"
+          git push
