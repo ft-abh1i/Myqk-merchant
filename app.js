@@ -44,6 +44,7 @@ const state = {
   stockFilter: 'all',
   location: null,
   resolvedAddress: null,
+  storeImagePreviewUrl: null,
   unsubStore: null,
   unsubProducts: null,
   unsubOrders: null,
@@ -54,8 +55,8 @@ const state = {
 };
 
 const IMAGE_RULES = Object.freeze({
-  inputMaxBytes: 8 * 1024 * 1024,
-  store: { maxWidth: 1200, maxHeight: 800, maxBytes: 300 * 1024 },
+  inputMaxBytes: 5 * 1024 * 1024,
+  store: { maxWidth: 960, maxHeight: 640, maxBytes: 50 * 1024 },
   product: { maxWidth: 800, maxHeight: 800, maxBytes: 180 * 1024 }
 });
 
@@ -201,7 +202,7 @@ function validateImageFile(file) {
     throw new Error('Only JPG, PNG and WebP photos are allowed.');
   }
   if (file.size > IMAGE_RULES.inputMaxBytes) {
-    throw new Error('Photo must be smaller than 8 MB.');
+    throw new Error('Photo must be 5 MB or smaller.');
   }
 }
 
@@ -236,7 +237,7 @@ async function compressImage(file, rules) {
   let scale = Math.min(1, rules.maxWidth / sourceWidth, rules.maxHeight / sourceHeight);
   let lastBlob = null;
 
-  for (let resizePass = 0; resizePass < 3; resizePass += 1) {
+  for (let resizePass = 0; resizePass < 6; resizePass += 1) {
     const width = Math.max(1, Math.round(sourceWidth * scale));
     const height = Math.max(1, Math.round(sourceHeight * scale));
     const canvas = document.createElement('canvas');
@@ -247,27 +248,34 @@ async function compressImage(file, rules) {
     context.fillRect(0, 0, width, height);
     context.drawImage(source, 0, 0, width, height);
 
-    for (const quality of [0.84, 0.74, 0.64, 0.54]) {
+    for (const quality of [0.84, 0.74, 0.64, 0.54, 0.44, 0.36]) {
       lastBlob = await canvasToBlob(canvas, quality);
       if (lastBlob.size <= rules.maxBytes) {
         if (typeof source.close === 'function') source.close();
         return lastBlob;
       }
     }
-    scale *= 0.82;
+    scale *= 0.78;
   }
 
   if (typeof source.close === 'function') source.close();
   return lastBlob;
 }
 
-async function uploadImage(file, { folder, kind, statusElement }) {
+async function uploadImage(file, { folder, kind, statusElement, progressElement = null }) {
   if (!file) return null;
   if (!cloudinaryReady()) {
     throw new Error('Cloudinary is not configured. Add the public cloud name and unsigned preset.');
   }
 
-  if (statusElement) statusElement.textContent = 'Compressing photo…';
+  const progress = progressElement?.parentElement;
+  if (progressElement) progressElement.style.width = '0%';
+  if (progress) {
+    progress.classList.remove('hidden');
+    progress.setAttribute('aria-hidden', 'false');
+  }
+
+  if (statusElement) statusElement.textContent = 'Compressing photo to WebP…';
   const compressed = await compressImage(file, IMAGE_RULES[kind]);
   if (statusElement) statusElement.textContent = `Uploading ${(compressed.size / 1024).toFixed(0)} KB…`;
 
@@ -276,25 +284,33 @@ async function uploadImage(file, { folder, kind, statusElement }) {
   formData.append('upload_preset', cloudinaryConfig.uploadPreset);
   formData.append('folder', folder);
 
-  const controller = new AbortController();
-  const timeout = window.setTimeout(() => controller.abort(), 45000);
-  try {
-    const response = await fetch(
-      `https://api.cloudinary.com/v1_1/${encodeURIComponent(cloudinaryConfig.cloudName)}/image/upload`,
-      { method: 'POST', body: formData, signal: controller.signal }
-    );
-    const result = await response.json();
-    if (!response.ok || !result.secure_url) {
-      throw new Error(result?.error?.message || 'Photo upload failed.');
-    }
-    if (statusElement) statusElement.textContent = 'Photo uploaded.';
-    return { imageUrl: result.secure_url, imagePublicId: result.public_id || '' };
-  } catch (error) {
-    if (error.name === 'AbortError') throw new Error('Photo upload timed out. Check your connection and retry.');
-    throw error;
-  } finally {
-    window.clearTimeout(timeout);
-  }
+  const result = await new Promise((resolve, reject) => {
+    const request = new XMLHttpRequest();
+    request.open('POST', `https://api.cloudinary.com/v1_1/${encodeURIComponent(cloudinaryConfig.cloudName)}/image/upload`);
+    request.timeout = 45000;
+    request.upload.addEventListener('progress', (event) => {
+      if (!event.lengthComputable || !progressElement) return;
+      const percent = Math.min(99, Math.max(1, Math.round((event.loaded / event.total) * 100)));
+      progressElement.style.width = `${percent}%`;
+      if (statusElement) statusElement.textContent = `Uploading ${percent}% · ${(compressed.size / 1024).toFixed(0)} KB`;
+    });
+    request.addEventListener('load', () => {
+      let response = {};
+      try { response = JSON.parse(request.responseText || '{}'); } catch { response = {}; }
+      if (request.status < 200 || request.status >= 300 || !response.secure_url) {
+        reject(new Error(response?.error?.message || 'Photo upload failed.'));
+        return;
+      }
+      resolve(response);
+    });
+    request.addEventListener('error', () => reject(new Error('Photo upload failed. Check your connection and retry.')));
+    request.addEventListener('timeout', () => reject(new Error('Photo upload timed out. Check your connection and retry.')));
+    request.send(formData);
+  });
+
+  if (progressElement) progressElement.style.width = '100%';
+  if (statusElement) statusElement.textContent = `Photo uploaded · ${(compressed.size / 1024).toFixed(0)} KB WebP`;
+  return { imageUrl: result.secure_url, imagePublicId: result.public_id || '' };
 }
 
 function previewSelectedFile(input, preview, status, requiredText) {
@@ -318,6 +334,76 @@ function previewSelectedFile(input, preview, status, requiredText) {
     preview.classList.remove('visible');
     status.textContent = error.message;
     toast(error.message, true);
+  }
+}
+
+function resetStoreImageProgress() {
+  const progress = $('#store-image-progress');
+  const bar = $('#store-image-progress-bar');
+  bar.style.width = '0%';
+  progress.classList.add('hidden');
+  progress.setAttribute('aria-hidden', 'true');
+}
+
+function renderStoreImagePicker() {
+  const input = $('#store-image-update');
+  if (input.files?.[0]) return;
+  const preview = $('#store-image-preview');
+  const placeholder = $('#store-image-placeholder');
+  const savedImage = state.storeId && state.store?.imageUrl ? safeImageUrl(state.store.imageUrl, state.store.name || 'Store') : '';
+
+  if (savedImage) {
+    preview.src = savedImage;
+    preview.hidden = false;
+    placeholder.classList.add('hidden');
+    $('#choose-store-image-btn').textContent = 'Change image';
+  } else {
+    preview.removeAttribute('src');
+    preview.hidden = true;
+    placeholder.classList.remove('hidden');
+    $('#choose-store-image-btn').textContent = 'Choose image';
+  }
+
+  $('#remove-store-image-btn').classList.add('hidden');
+  $('#save-store-image-btn').classList.toggle('hidden', !state.storeId);
+  $('#store-image-update-status').textContent = !cloudinaryReady()
+    ? 'Cloudinary configuration is required for uploads.'
+    : (state.storeId ? 'JPG, PNG or WebP · max 5 MB · saved as WebP' : 'Required for setup · JPG, PNG or WebP · max 5 MB');
+  resetStoreImageProgress();
+}
+
+function resetStoreImageSelection() {
+  const input = $('#store-image-update');
+  input.value = '';
+  if (state.storeImagePreviewUrl) URL.revokeObjectURL(state.storeImagePreviewUrl);
+  state.storeImagePreviewUrl = null;
+  renderStoreImagePicker();
+}
+
+function previewStoreImageSelection() {
+  const input = $('#store-image-update');
+  const file = input.files?.[0];
+  if (!file) {
+    resetStoreImageSelection();
+    return;
+  }
+  try {
+    validateImageFile(file);
+    if (state.storeImagePreviewUrl) URL.revokeObjectURL(state.storeImagePreviewUrl);
+    state.storeImagePreviewUrl = URL.createObjectURL(file);
+    const preview = $('#store-image-preview');
+    preview.src = state.storeImagePreviewUrl;
+    preview.hidden = false;
+    $('#store-image-placeholder').classList.add('hidden');
+    $('#remove-store-image-btn').classList.remove('hidden');
+    $('#choose-store-image-btn').textContent = 'Change image';
+    $('#store-image-update-status').textContent = `${(file.size / 1024 / 1024).toFixed(1)} MB selected · will be compressed to WebP under 50 KB`;
+    resetStoreImageProgress();
+  } catch (error) {
+    input.value = '';
+    $('#store-image-update-status').textContent = error.message;
+    toast(error.message, true);
+    renderStoreImagePicker();
   }
 }
 
@@ -493,6 +579,43 @@ async function requestLocation() {
   }
 }
 
+async function requestStoreLocation() {
+  const button = $('#settings-location-btn');
+  const status = $('#settings-location-status');
+  if (!navigator.geolocation) {
+    status.textContent = 'This browser does not support location.';
+    return toast('Location is not supported in this browser.', true);
+  }
+
+  setButtonBusy(button, true, 'Detecting…', 'Use current location');
+  status.textContent = 'Checking GPS permission…';
+  try {
+    const position = await getCurrentPosition();
+    state.location = {
+      latitude: Number(position.coords.latitude.toFixed(6)),
+      longitude: Number(position.coords.longitude.toFixed(6)),
+      accuracy: Math.round(position.coords.accuracy),
+      capturedAt: new Date().toISOString()
+    };
+    status.textContent = 'Location found. Fetching readable address…';
+    state.resolvedAddress = await reverseGeocode(state.location.latitude, state.location.longitude);
+    $('#settings-address').value = state.resolvedAddress.fullAddress;
+    status.textContent = `Detected: ${state.resolvedAddress.fullAddress}`;
+    toast('Store location and address detected.');
+  } catch (error) {
+    console.warn(error);
+    state.location = null;
+    state.resolvedAddress = null;
+    $('#settings-address').value = '';
+    status.textContent = error?.message === 'Exact address could not be detected.'
+      ? 'GPS found, but the readable address could not be detected. Try again near the store.'
+      : geolocationMessage(error).replace(/, or add the address manually| or add the address manually| Add the address manually\./g, '');
+    toast('Store location could not be detected. Try again.', true);
+  } finally {
+    setButtonBusy(button, false, 'Detecting…', 'Use current location');
+  }
+}
+
 function hydrateOnboarding() {
   $('#business-form').reset();
   $('#owner-name').value = state.user.displayName || '';
@@ -656,13 +779,22 @@ function hydrateStoreSettings() {
   if (!state.store) return;
   $('#settings-store-name').value = state.store.name || '';
   $('#settings-category').value = state.store.category || 'other';
-  $('#settings-description').value = state.store.description || '';
   $('#settings-phone').value = state.store.phone || '';
   $('#settings-address').value = state.store.address?.fullAddress || '';
   $('#settings-opening-time').value = state.store.openingTime || '09:00';
   $('#settings-closing-time').value = state.store.closingTime || '21:00';
   $('#settings-minimum-order').value = Number(state.store.minimumOrder || 0);
   $('#settings-radius').value = Number(state.store.deliveryRadiusKm || 8);
+
+  if (state.storeId && validCoordinates(state.store.location)) {
+    state.location = state.store.location;
+    state.resolvedAddress = state.store.address || null;
+    $('#settings-location-status').textContent = `Saved location: ${state.store.address?.fullAddress || 'GPS coordinates available'}`;
+  } else if (!validCoordinates(state.location)) {
+    state.location = null;
+    state.resolvedAddress = null;
+    $('#settings-location-status').textContent = 'Use GPS to detect the customer-facing address.';
+  }
 }
 
 function hydrateApp() {
@@ -679,11 +811,9 @@ function hydrateApp() {
     ? 'You can finish products and inventory now. The store becomes visible to customers after approval.'
     : 'Open the Store tab and save your details to connect the dashboard.';
   $('#profile-store-image').src = safeImageUrl(state.store?.imageUrl, name);
-  $('#store-image-update-status').textContent = cloudinaryReady()
-    ? (configured ? 'Choose a new cover photo and save.' : 'Save store details before uploading a cover photo.')
-    : 'Cloudinary configuration is required for uploads.';
   renderShopToggle();
   hydrateStoreSettings();
+  renderStoreImagePicker();
 }
 
 function requireStoreSetup() {
@@ -711,43 +841,53 @@ async function saveStoreSettings(event) {
 
   const name = $('#settings-store-name').value.trim();
   const category = $('#settings-category').value;
-  const description = $('#settings-description').value.trim();
   const phone = $('#settings-phone').value.replace(/\D/g, '');
   const fullAddress = $('#settings-address').value.trim();
   const openingTime = $('#settings-opening-time').value;
   const closingTime = $('#settings-closing-time').value;
   const minimumOrder = Number($('#settings-minimum-order').value);
   const deliveryRadiusKm = Number($('#settings-radius').value);
+  const location = validCoordinates(state.location) ? state.location : state.store?.location;
+  const detectedAddress = state.resolvedAddress || state.store?.address;
+  const newStoreImage = $('#store-image-update').files?.[0];
 
-  if (!name || !description || !fullAddress) return toast('Complete all store details.', true);
+  if (!name || !fullAddress) return toast('Complete the store details and detect location.', true);
+  if (!validCoordinates(location) || !detectedAddress) return toast('Use current location before saving.', true);
+  if (!state.storeId && !newStoreImage) return toast('Add a store cover image before saving.', true);
   if (!/^[6-9]\d{9}$/.test(phone)) return toast('Enter a valid 10-digit store phone number.', true);
   if (!Number.isFinite(minimumOrder) || minimumOrder < 0) return toast('Minimum order must be zero or more.', true);
   if (!Number.isFinite(deliveryRadiusKm) || deliveryRadiusKm <= 0) return toast('Delivery radius must be greater than zero.', true);
+
+  const address = {
+    fullAddress,
+    locality: detectedAddress.locality || '',
+    city: detectedAddress.city || '',
+    state: detectedAddress.state || '',
+    postalCode: detectedAddress.postalCode || '',
+    country: detectedAddress.country || 'India',
+    source: 'reverse_geocoding'
+  };
 
   const button = $('#save-store-settings-btn');
   setButtonBusy(button, true, state.storeId ? 'Saving…' : 'Connecting…', 'Save store details');
   try {
     if (!state.storeId) {
-      const geocoded = await forwardGeocode(fullAddress);
       const storeReference = doc(collection(db, 'stores'));
+      const uploaded = await uploadImage(newStoreImage, {
+        folder: `myqk/stores/${storeReference.id}`,
+        kind: 'store',
+        statusElement: $('#store-image-update-status'),
+        progressElement: $('#store-image-progress-bar')
+      });
       const timestamp = serverTimestamp();
-      const address = {
-        fullAddress,
-        locality: geocoded.address?.locality || '',
-        city: geocoded.address?.city || '',
-        state: geocoded.address?.state || '',
-        postalCode: geocoded.address?.postalCode || '',
-        country: geocoded.address?.country || 'India',
-        source: geocoded.address?.source || 'merchant_edit'
-      };
       const store = {
         merchantId: state.user.uid,
         name,
         category,
-        description,
+        description: '',
         phone,
         address,
-        location: geocoded.location,
+        location,
         openingTime,
         closingTime,
         isOpen: true,
@@ -757,8 +897,8 @@ async function saveStoreSettings(event) {
         deliveryRadiusKm,
         rating: 0,
         totalRatings: 0,
-        imageUrl: '',
-        imagePublicId: '',
+        imageUrl: uploaded.imageUrl,
+        imagePublicId: uploaded.imagePublicId,
         createdAt: timestamp,
         updatedAt: timestamp
       };
@@ -782,6 +922,7 @@ async function saveStoreSettings(event) {
       state.merchant = merchant;
       state.store = store;
       state.storeId = storeReference.id;
+      resetStoreImageSelection();
       hydrateApp();
       renderAll();
       startRealtime();
@@ -789,23 +930,20 @@ async function saveStoreSettings(event) {
       return;
     }
 
-    const address = {
-      ...(state.store.address || {}),
-      fullAddress,
-      source: 'merchant_edit'
-    };
     await updateDoc(doc(db, 'stores', state.storeId), {
       name,
       category,
-      description,
       phone,
       address,
+      location,
       openingTime,
       closingTime,
       minimumOrder,
       deliveryRadiusKm,
       updatedAt: serverTimestamp()
     });
+    state.store = { ...state.store, name, category, phone, address, location, openingTime, closingTime, minimumOrder, deliveryRadiusKm };
+    hydrateApp();
     toast('Store details updated for customers and riders.');
   } catch (error) {
     console.error(error);
@@ -825,14 +963,17 @@ async function saveStoreImage() {
     const uploaded = await uploadImage(file, {
       folder: `myqk/stores/${state.storeId}`,
       kind: 'store',
-      statusElement: $('#store-image-update-status')
+      statusElement: $('#store-image-update-status'),
+      progressElement: $('#store-image-progress-bar')
     });
     await updateDoc(doc(db, 'stores', state.storeId), {
       imageUrl: uploaded.imageUrl,
       imagePublicId: uploaded.imagePublicId,
       updatedAt: serverTimestamp()
     });
-    $('#store-image-update').value = '';
+    state.store = { ...state.store, imageUrl: uploaded.imageUrl, imagePublicId: uploaded.imagePublicId };
+    resetStoreImageSelection();
+    hydrateApp();
     toast('Store photo updated on customer and merchant apps.');
   } catch (error) {
     console.error(error);
@@ -1381,6 +1522,9 @@ document.addEventListener('keydown', (event) => {
 
 $('#shop-toggle').addEventListener('click', toggleShop);
 $('#store-settings-form').addEventListener('submit', saveStoreSettings);
+$('#settings-location-btn').addEventListener('click', requestStoreLocation);
+$('#choose-store-image-btn').addEventListener('click', () => $('#store-image-update').click());
+$('#remove-store-image-btn').addEventListener('click', resetStoreImageSelection);
 $('#save-store-image-btn').addEventListener('click', saveStoreImage);
 $('#add-product-btn').addEventListener('click', openAddProduct);
 $('#add-inventory-product-btn').addEventListener('click', openAddProduct);
@@ -1396,18 +1540,7 @@ $('#product-image').addEventListener('change', () => previewSelectedFile(
   $('#product-image-status'),
   $('#product-id').value ? 'Choose a photo only to replace the current one.' : 'Required for a new product.'
 ));
-$('#store-image-update').addEventListener('change', () => {
-  const file = $('#store-image-update').files?.[0];
-  if (!file) return;
-  try {
-    validateImageFile(file);
-    $('#store-image-update-status').textContent = `${(file.size / 1024 / 1024).toFixed(1)} MB selected. Save to upload.`;
-  } catch (error) {
-    $('#store-image-update').value = '';
-    $('#store-image-update-status').textContent = error.message;
-    toast(error.message, true);
-  }
-});
+$('#store-image-update').addEventListener('change', previewStoreImageSelection);
 $$('[data-filter]').forEach((button) => button.addEventListener('click', () => {
   $$('[data-filter]').forEach((item) => item.classList.remove('active'));
   button.classList.add('active');
