@@ -1,8 +1,8 @@
 export const firebaseConfig = {
-  apiKey: 'AIzaSyDbNDNI1a69VDZmLo7Se6LNGPLD6A8_MmE',
-  authDomain: 'buyqk-rider.firebaseapp.com',
-  projectId: 'buyqk-rider',
-  storageBucket: 'buyqk-rider.firebasestorage.app',
-  messagingSenderId: '61147606971',
-  appId: '1:61147606971:web:d69dd4fcf5c0a0fea01e9e'
+  apiKey: 'AIzaSyAdE40-NJlErzD-w1y7TaIKMI_0wEXSOsg',
+  authDomain: 'buyqk-app.firebaseapp.com',
+  projectId: 'buyqk-app',
+  storageBucket: 'buyqk-app.firebasestorage.app',
+  messagingSenderId: '330615637805',
+  appId: '1:330615637805:web:44851732ea01d6be6335a4'
 };
