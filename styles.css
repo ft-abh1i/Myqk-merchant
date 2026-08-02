@@ -101,6 +101,10 @@ svg {
   display: flex;
 }
 
+#app-screen {
+  display: flex;
+}
+
 .center-screen {
   align-items: center;
   flex-direction: column;
