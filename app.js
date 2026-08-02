@@ -1,9 +1,16 @@
 import { firebaseConfig } from './firebase-config.js';
 import { cloudinaryConfig } from './cloudinary-config.js';
 import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.12.5/firebase-app.js';
-import { getAuth, GoogleAuthProvider, onAuthStateChanged, signInWithPopup, signOut } from 'https://www.gstatic.com/firebasejs/10.12.5/firebase-auth.js';
 import {
-  addDoc,
+  getAuth,
+  getRedirectResult,
+  GoogleAuthProvider,
+  onAuthStateChanged,
+  signInWithPopup,
+  signInWithRedirect,
+  signOut
+} from 'https://www.gstatic.com/firebasejs/10.12.5/firebase-auth.js';
+import {
   collection,
   doc,
   getDoc,
@@ -16,13 +23,13 @@ import {
   serverTimestamp,
   setDoc,
   updateDoc,
-  writeBatch,
-  where
+  where,
+  writeBatch
 } from 'https://www.gstatic.com/firebasejs/10.12.5/firebase-firestore.js';
 
-const app = initializeApp(firebaseConfig);
-const auth = getAuth(app);
-const db = getFirestore(app);
+const firebaseApp = initializeApp(firebaseConfig);
+const auth = getAuth(firebaseApp);
+const db = getFirestore(firebaseApp);
 const $ = (selector) => document.querySelector(selector);
 const $$ = (selector) => [...document.querySelectorAll(selector)];
 
@@ -37,34 +44,65 @@ const state = {
   productFilter: '',
   orderFilter: 'all',
   stockFilter: 'all',
+  location: null,
+  resolvedAddress: null,
+  unsubStore: null,
   unsubProducts: null,
   unsubOrders: null,
   unsubToday: null,
-  location: null,
-  resolvedAddress: null,
+  hasInitialOrderSnapshot: false,
+  knownPendingOrders: new Set(),
   reconcilingOrders: new Set()
 };
 
-const IMAGE_RULES = {
+const IMAGE_RULES = Object.freeze({
   inputMaxBytes: 8 * 1024 * 1024,
   store: { maxWidth: 1200, maxHeight: 800, maxBytes: 300 * 1024 },
   product: { maxWidth: 800, maxHeight: 800, maxBytes: 180 * 1024 }
-};
+});
+
+const CATEGORY_LABELS = Object.freeze({
+  groceries: 'Grocery',
+  food: 'Food & Restaurant',
+  pharmacy: 'Pharmacy',
+  beauty: 'Beauty',
+  kids: 'Kids',
+  electronics: 'Electronics',
+  services: 'Services',
+  other: 'Other'
+});
 
 function toast(message, error = false) {
   const element = $('#toast');
+  if (!element) return;
   element.textContent = message;
   element.className = `toast show${error ? ' error' : ''}`;
-  clearTimeout(toast.timer);
-  toast.timer = setTimeout(() => { element.className = 'toast'; }, 3200);
+  window.clearTimeout(toast.timer);
+  toast.timer = window.setTimeout(() => { element.className = 'toast'; }, 3400);
 }
 
 function showScreen(id) {
   $$('.screen').forEach((screen) => screen.classList.toggle('active', screen.id === id));
 }
 
+function setButtonBusy(button, busy, busyText, normalText) {
+  if (!button) return;
+  button.disabled = busy;
+  button.textContent = busy ? busyText : normalText;
+}
+
 function money(value) {
-  return `₹${Number(value || 0).toLocaleString('en-IN')}`;
+  return `₹${Number(value || 0).toLocaleString('en-IN', { maximumFractionDigits: 2 })}`;
+}
+
+function escapeHtml(value = '') {
+  return String(value).replace(/[&<>"']/g, (character) => ({
+    '&': '&amp;',
+    '<': '&lt;',
+    '>': '&gt;',
+    '"': '&quot;',
+    "'": '&#39;'
+  })[character]);
 }
 
 function validCoordinates(value) {
@@ -94,35 +132,31 @@ function distanceKm(first, second) {
   return 6371 * 2 * Math.atan2(Math.sqrt(calculation), Math.sqrt(1 - calculation));
 }
 
-function escapeHtml(value = '') {
-  return String(value).replace(/[&<>"']/g, (character) => ({
-    '&': '&amp;',
-    '<': '&lt;',
-    '>': '&gt;',
-    '"': '&quot;',
-    "'": '&#39;'
-  })[character]);
-}
-
 function stockState(product) {
-  if (Number(product.stockQuantity) <= 0) return 'out';
-  if (Number(product.stockQuantity) <= Number(product.lowStockThreshold || 5)) return 'low';
+  const stock = Number(product.stockQuantity || 0);
+  if (stock <= 0) return 'out';
+  if (stock <= Number(product.lowStockThreshold || 5)) return 'low';
   return 'ok';
 }
 
-function openModal(id) {
-  $(`#${id}`).classList.add('open');
-  $(`#${id}`).setAttribute('aria-hidden', 'false');
-}
-
-function closeModal(id) {
-  $(`#${id}`).classList.remove('open');
-  $(`#${id}`).setAttribute('aria-hidden', 'true');
+function statusLabel(status) {
+  return ({
+    pending_merchant: 'New order',
+    merchant_accepted: 'Accepted',
+    preparing: 'Preparing',
+    ready_for_pickup: 'Ready for pickup',
+    accepted: 'Rider assigned',
+    arrived_pickup: 'Rider at store',
+    picked_up: 'Picked up',
+    completed: 'Completed',
+    merchant_rejected: 'Rejected',
+    cancelled: 'Cancelled'
+  })[status] || status || 'Processing';
 }
 
 function placeholderImage(label = 'QK') {
   const initials = String(label).trim().split(/\s+/).slice(0, 2).map((part) => part[0] || '').join('').toUpperCase() || 'QK';
-  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="640" height="480" viewBox="0 0 640 480"><rect width="640" height="480" rx="40" fill="#f8cb46"/><text x="320" y="275" text-anchor="middle" font-family="Arial,sans-serif" font-size="150" font-weight="700" fill="#111827">${escapeHtml(initials)}</text></svg>`;
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="640" height="480" viewBox="0 0 640 480"><rect width="640" height="480" fill="#061a3b"/><circle cx="320" cy="240" r="125" fill="#f7cf3f"/><text x="320" y="275" text-anchor="middle" font-family="Arial,sans-serif" font-size="86" font-weight="800" fill="#061a3b">${escapeHtml(initials)}</text></svg>`;
   return `data:image/svg+xml,${encodeURIComponent(svg)}`;
 }
 
@@ -135,6 +169,22 @@ function safeImageUrl(value, fallbackLabel = 'QK') {
   } catch {
     return placeholderImage(fallbackLabel);
   }
+}
+
+function openModal(id) {
+  const modal = $(`#${id}`);
+  if (!modal) return;
+  modal.classList.add('open');
+  modal.setAttribute('aria-hidden', 'false');
+  document.body.style.overflow = 'hidden';
+}
+
+function closeModal(id) {
+  const modal = $(`#${id}`);
+  if (!modal) return;
+  modal.classList.remove('open');
+  modal.setAttribute('aria-hidden', 'true');
+  document.body.style.overflow = '';
 }
 
 function cloudinaryReady() {
@@ -158,15 +208,15 @@ function validateImageFile(file) {
 
 async function decodeImage(file) {
   if ('createImageBitmap' in window) return createImageBitmap(file);
-  const url = URL.createObjectURL(file);
+  const objectUrl = URL.createObjectURL(file);
   try {
     const image = new Image();
     image.decoding = 'async';
-    image.src = url;
+    image.src = objectUrl;
     await image.decode();
     return image;
   } finally {
-    URL.revokeObjectURL(url);
+    URL.revokeObjectURL(objectUrl);
   }
 }
 
@@ -198,7 +248,7 @@ async function compressImage(file, rules) {
     context.fillRect(0, 0, width, height);
     context.drawImage(source, 0, 0, width, height);
 
-    for (const quality of [0.82, 0.72, 0.62, 0.52]) {
+    for (const quality of [0.84, 0.74, 0.64, 0.54]) {
       lastBlob = await canvasToBlob(canvas, quality);
       if (lastBlob.size <= rules.maxBytes) {
         if (typeof source.close === 'function') source.close();
@@ -215,12 +265,11 @@ async function compressImage(file, rules) {
 async function uploadImage(file, { folder, kind, statusElement }) {
   if (!file) return null;
   if (!cloudinaryReady()) {
-    throw new Error('Cloudinary is not configured yet. Add cloud name and unsigned upload preset in cloudinary-config.js.');
+    throw new Error('Cloudinary is not configured. Add the public cloud name and unsigned preset.');
   }
 
-  const rules = IMAGE_RULES[kind];
   if (statusElement) statusElement.textContent = 'Compressing photo…';
-  const compressed = await compressImage(file, rules);
+  const compressed = await compressImage(file, IMAGE_RULES[kind]);
   if (statusElement) statusElement.textContent = `Uploading ${(compressed.size / 1024).toFixed(0)} KB…`;
 
   const formData = new FormData();
@@ -229,7 +278,7 @@ async function uploadImage(file, { folder, kind, statusElement }) {
   formData.append('folder', folder);
 
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 45000);
+  const timeout = window.setTimeout(() => controller.abort(), 45000);
   try {
     const response = await fetch(
       `https://api.cloudinary.com/v1_1/${encodeURIComponent(cloudinaryConfig.cloudName)}/image/upload`,
@@ -242,14 +291,14 @@ async function uploadImage(file, { folder, kind, statusElement }) {
     if (statusElement) statusElement.textContent = 'Photo uploaded.';
     return { imageUrl: result.secure_url, imagePublicId: result.public_id || '' };
   } catch (error) {
-    if (error.name === 'AbortError') throw new Error('Photo upload timed out. Try a smaller image or better network.');
+    if (error.name === 'AbortError') throw new Error('Photo upload timed out. Check your connection and retry.');
     throw error;
   } finally {
-    clearTimeout(timeout);
+    window.clearTimeout(timeout);
   }
 }
 
-function previewSelectedFile(input, preview, status, requiredText = 'JPG, PNG or WebP. The app compresses it before upload.') {
+function previewSelectedFile(input, preview, status, requiredText) {
   const file = input.files?.[0];
   if (!file) {
     preview.removeAttribute('src');
@@ -273,28 +322,40 @@ function previewSelectedFile(input, preview, status, requiredText = 'JPG, PNG or
   }
 }
 
-function setButtonBusy(button, busy, busyText, normalText) {
-  button.disabled = busy;
-  button.textContent = busy ? busyText : normalText;
-}
-
 async function login() {
+  const button = $('#google-login-btn');
+  setButtonBusy(button, true, 'Connecting…', 'Continue with Google');
+  const provider = new GoogleAuthProvider();
+  provider.setCustomParameters({ prompt: 'select_account' });
   try {
-    const provider = new GoogleAuthProvider();
-    provider.setCustomParameters({ prompt: 'select_account' });
     await signInWithPopup(auth, provider);
   } catch (error) {
+    if (['auth/popup-blocked', 'auth/cancelled-popup-request', 'auth/operation-not-supported-in-this-environment'].includes(error.code)) {
+      await signInWithRedirect(auth, provider);
+      return;
+    }
     console.error(error);
     toast(error.code === 'auth/unauthorized-domain'
-      ? 'Add this Vercel or Cloudflare Pages domain in Firebase Authorized domains.'
-      : 'Google login failed.', true);
+      ? 'Add this deployed domain to Firebase Authorized domains.'
+      : 'Google login failed. Please retry.', true);
+  } finally {
+    setButtonBusy(button, false, 'Connecting…', 'Continue with Google');
   }
 }
 
-async function logout() {
+function stopRealtime() {
+  state.unsubStore?.();
   state.unsubProducts?.();
   state.unsubOrders?.();
   state.unsubToday?.();
+  state.unsubStore = null;
+  state.unsubProducts = null;
+  state.unsubOrders = null;
+  state.unsubToday = null;
+}
+
+async function logout() {
+  stopRealtime();
   await signOut(auth);
 }
 
@@ -304,8 +365,9 @@ async function loadMerchant() {
   if (!state.merchant?.onboardingComplete) return false;
   state.storeId = state.merchant.storeId;
   const storeSnapshot = await getDoc(doc(db, 'stores', state.storeId));
-  state.store = storeSnapshot.exists() ? storeSnapshot.data() : null;
-  return Boolean(state.store);
+  if (!storeSnapshot.exists()) throw new Error('Linked store was not found.');
+  state.store = storeSnapshot.data();
+  return true;
 }
 
 function openManualAddress(focus = false) {
@@ -334,7 +396,7 @@ function formatReverseAddress(result) {
 
 async function reverseGeocode(latitude, longitude) {
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 15000);
+  const timeout = window.setTimeout(() => controller.abort(), 15000);
   try {
     const params = new URLSearchParams({
       latitude: String(latitude),
@@ -350,13 +412,13 @@ async function reverseGeocode(latitude, longitude) {
     if (!address.fullAddress) throw new Error('Exact address could not be detected.');
     return address;
   } finally {
-    clearTimeout(timeout);
+    window.clearTimeout(timeout);
   }
 }
 
 async function forwardGeocode(fullAddress) {
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 15000);
+  const timeout = window.setTimeout(() => controller.abort(), 15000);
   try {
     const params = new URLSearchParams({
       q: fullAddress,
@@ -376,7 +438,6 @@ async function forwardGeocode(fullAddress) {
     if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) {
       throw new Error('Shop address was not found. Add area, city, state and PIN code.');
     }
-
     const details = result.address || {};
     return {
       location: {
@@ -396,15 +457,15 @@ async function forwardGeocode(fullAddress) {
       }
     };
   } finally {
-    clearTimeout(timeout);
+    window.clearTimeout(timeout);
   }
 }
 
 function geolocationMessage(error) {
-  if (error?.code === 1) return 'Location access is blocked. Allow Location in browser/site settings, or add the address manually below.';
-  if (error?.code === 2) return 'Current location is unavailable. Turn on device Location/GPS, or add the address manually below.';
-  if (error?.code === 3) return 'Location detection timed out. Try again outside, or add the address manually below.';
-  return 'Location could not be detected. Add the address manually below.';
+  if (error?.code === 1) return 'Location access is blocked. Allow it in browser settings, or add the address manually.';
+  if (error?.code === 2) return 'Current location is unavailable. Turn on GPS, or add the address manually.';
+  if (error?.code === 3) return 'Location detection timed out. Try again or add the address manually.';
+  return 'Location could not be detected. Add the address manually.';
 }
 
 function getCurrentPosition() {
@@ -420,28 +481,13 @@ function getCurrentPosition() {
 async function requestLocation() {
   const button = $('#location-btn');
   if (!navigator.geolocation) {
-    $('#location-status').textContent = 'This browser does not support location. Add the shop address manually below.';
+    $('#location-status').textContent = 'This browser does not support location. Add the address manually.';
     openManualAddress(true);
     return;
   }
-
   setButtonBusy(button, true, 'Detecting location…', 'Use current shop location');
   $('#location-status').textContent = 'Checking location permission…';
-
   try {
-    if (navigator.permissions?.query) {
-      try {
-        const permission = await navigator.permissions.query({ name: 'geolocation' });
-        if (permission.state === 'denied') {
-          $('#location-status').textContent = 'Location access is blocked. Open browser/site settings and allow Location, or add the address manually.';
-          openManualAddress(true);
-          return;
-        }
-      } catch (permissionError) {
-        console.debug('Permissions API unavailable; using browser geolocation prompt.', permissionError);
-      }
-    }
-
     const position = await getCurrentPosition();
     state.location = {
       latitude: Number(position.coords.latitude.toFixed(6)),
@@ -450,7 +496,6 @@ async function requestLocation() {
       capturedAt: new Date().toISOString()
     };
     $('#location-status').textContent = 'Location found. Fetching readable address…';
-
     try {
       state.resolvedAddress = await reverseGeocode(state.location.latitude, state.location.longitude);
       $('#shop-address').value = state.resolvedAddress.fullAddress;
@@ -459,13 +504,13 @@ async function requestLocation() {
       $('#location-status').textContent = `Detected: ${state.resolvedAddress.fullAddress}`;
       toast('Shop location and address added.');
     } catch (error) {
-      console.warn('Reverse geocoding failed:', error);
+      console.warn(error);
       state.resolvedAddress = null;
-      $('#location-status').textContent = 'Location detected, but the readable address could not be fetched. Add the exact address manually below.';
+      $('#location-status').textContent = 'Location detected. Add the exact readable address below.';
       openManualAddress(true);
     }
   } catch (error) {
-    console.warn('Geolocation failed:', error);
+    console.warn(error);
     state.location = null;
     state.resolvedAddress = null;
     $('#location-status').textContent = geolocationMessage(error);
@@ -476,18 +521,20 @@ async function requestLocation() {
 }
 
 function hydrateOnboarding() {
+  $('#business-form').reset();
   $('#owner-name').value = state.user.displayName || '';
+  $('#opening-time').value = '09:00';
+  $('#closing-time').value = '21:00';
   state.location = null;
   state.resolvedAddress = null;
-  $('#shop-address').value = '';
   $('#shop-address').dataset.source = '';
   $('#manual-address-panel').classList.add('hidden');
   $('#manual-address-btn').textContent = 'Add address manually';
   $('#location-status').textContent = 'Use GPS to detect the shop area, or add the address manually.';
-  $('#shop-image').value = '';
+  $('#shop-image-preview').removeAttribute('src');
   $('#shop-image-preview').classList.remove('visible');
   $('#shop-image-status').textContent = cloudinaryReady()
-    ? 'Required. JPG, PNG or WebP; compressed automatically.'
+    ? 'Required. The photo is compressed before upload.'
     : 'Cloudinary configuration is required before creating a store.';
 }
 
@@ -496,7 +543,6 @@ async function createBusiness(event) {
   const phone = $('#owner-phone').value.replace(/\D/g, '');
   const fullAddress = $('#shop-address').value.trim();
   const storePhoto = $('#shop-image').files?.[0];
-
   if (!/^[6-9]\d{9}$/.test(phone)) return toast('Enter a valid 10-digit phone number.', true);
   if (!fullAddress) {
     openManualAddress(true);
@@ -506,7 +552,6 @@ async function createBusiness(event) {
 
   const button = $('#complete-setup-btn');
   setButtonBusy(button, true, 'Creating…', 'Create business profile');
-
   try {
     if (!state.location || $('#shop-address').dataset.source === 'manual') {
       $('#location-status').textContent = 'Verifying the manual address…';
@@ -522,14 +567,14 @@ async function createBusiness(event) {
       kind: 'store',
       statusElement: $('#shop-image-status')
     });
-    const now = serverTimestamp();
+    const timestamp = serverTimestamp();
     const address = {
       fullAddress,
       locality: state.resolvedAddress?.locality || '',
       city: state.resolvedAddress?.city || '',
       state: state.resolvedAddress?.state || '',
       postalCode: state.resolvedAddress?.postalCode || '',
-      country: state.resolvedAddress?.country || '',
+      country: state.resolvedAddress?.country || 'India',
       source: state.resolvedAddress?.source || 'manual'
     };
     const store = {
@@ -551,8 +596,8 @@ async function createBusiness(event) {
       totalRatings: 0,
       imageUrl: storeImage.imageUrl,
       imagePublicId: storeImage.imagePublicId,
-      createdAt: now,
-      updatedAt: now
+      createdAt: timestamp,
+      updatedAt: timestamp
     };
     const merchant = {
       uid: state.user.uid,
@@ -564,8 +609,8 @@ async function createBusiness(event) {
       onboardingComplete: true,
       accountStatus: 'pending',
       termsAccepted: true,
-      createdAt: now,
-      updatedAt: now
+      createdAt: timestamp,
+      updatedAt: timestamp
     };
 
     const batch = writeBatch(db);
@@ -579,27 +624,13 @@ async function createBusiness(event) {
     hydrateApp();
     startRealtime();
     showScreen('app-screen');
-    toast('Store created. It will activate automatically shortly.');
+    toast('Business profile created. Store approval is pending.');
   } catch (error) {
     console.error(error);
     toast(error.message || 'Business profile could not be created.', true);
   } finally {
     setButtonBusy(button, false, 'Creating…', 'Create business profile');
   }
-}
-
-function hydrateApp() {
-  const name = state.store?.name || 'MyQK Store';
-  $('#header-store-name').textContent = name;
-  $('#profile-store-name').textContent = name;
-  $('#profile-owner-email').textContent = state.user.email || '—';
-  $('#profile-avatar').textContent = name.charAt(0).toUpperCase();
-  $('#profile-status').textContent = state.store?.isApproved ? 'Active store' : 'Pending approval';
-  $('#profile-store-image').src = safeImageUrl(state.store?.imageUrl, name);
-  $('#store-image-update-status').textContent = cloudinaryReady()
-    ? 'Choose a new cover photo and save.'
-    : 'Add Cloudinary settings before uploading photos.';
-  renderShopToggle();
 }
 
 function renderShopToggle() {
@@ -609,15 +640,83 @@ function renderShopToggle() {
   button.className = `status-toggle ${open ? 'open' : 'closed'}`;
 }
 
+function hydrateStoreSettings() {
+  if (!state.store) return;
+  $('#settings-store-name').value = state.store.name || '';
+  $('#settings-category').value = state.store.category || 'other';
+  $('#settings-description').value = state.store.description || '';
+  $('#settings-phone').value = state.store.phone || '';
+  $('#settings-address').value = state.store.address?.fullAddress || '';
+  $('#settings-opening-time').value = state.store.openingTime || '09:00';
+  $('#settings-closing-time').value = state.store.closingTime || '21:00';
+  $('#settings-minimum-order').value = Number(state.store.minimumOrder || 0);
+  $('#settings-radius').value = Number(state.store.deliveryRadiusKm || 8);
+}
+
+function hydrateApp() {
+  const name = state.store?.name || 'BuyQK Store';
+  $('#header-store-name').textContent = name;
+  $('#profile-store-name').textContent = name;
+  $('#profile-owner-email').textContent = state.user?.email || '—';
+  $('#profile-avatar').textContent = name.charAt(0).toUpperCase();
+  const approved = state.store?.isApproved === true && state.store?.status === 'active';
+  $('#profile-status').textContent = approved ? 'Active store' : 'Pending approval';
+  $('#approval-banner').classList.toggle('hidden', approved);
+  $('#profile-store-image').src = safeImageUrl(state.store?.imageUrl, name);
+  $('#store-image-update-status').textContent = cloudinaryReady()
+    ? 'Choose a new cover photo and save.'
+    : 'Cloudinary configuration is required for uploads.';
+  renderShopToggle();
+  hydrateStoreSettings();
+}
+
 async function toggleShop() {
+  if (!state.storeId) return;
+  const next = !(state.store?.isOpen !== false);
   try {
-    const next = !(state.store?.isOpen !== false);
     await updateDoc(doc(db, 'stores', state.storeId), { isOpen: next, updatedAt: serverTimestamp() });
-    state.store.isOpen = next;
-    renderShopToggle();
     toast(next ? 'Store is open.' : 'Store is closed.');
-  } catch {
+  } catch (error) {
+    console.error(error);
     toast('Store status update failed.', true);
+  }
+}
+
+async function saveStoreSettings(event) {
+  event.preventDefault();
+  const phone = $('#settings-phone').value.replace(/\D/g, '');
+  const minimumOrder = Number($('#settings-minimum-order').value);
+  const deliveryRadiusKm = Number($('#settings-radius').value);
+  if (!/^[6-9]\d{9}$/.test(phone)) return toast('Enter a valid 10-digit store phone number.', true);
+  if (!Number.isFinite(minimumOrder) || minimumOrder < 0) return toast('Minimum order must be zero or more.', true);
+  if (!Number.isFinite(deliveryRadiusKm) || deliveryRadiusKm <= 0) return toast('Delivery radius must be greater than zero.', true);
+
+  const button = $('#save-store-settings-btn');
+  setButtonBusy(button, true, 'Saving…', 'Save store details');
+  try {
+    const address = {
+      ...(state.store.address || {}),
+      fullAddress: $('#settings-address').value.trim(),
+      source: 'merchant_edit'
+    };
+    await updateDoc(doc(db, 'stores', state.storeId), {
+      name: $('#settings-store-name').value.trim(),
+      category: $('#settings-category').value,
+      description: $('#settings-description').value.trim(),
+      phone,
+      address,
+      openingTime: $('#settings-opening-time').value,
+      closingTime: $('#settings-closing-time').value,
+      minimumOrder,
+      deliveryRadiusKm,
+      updatedAt: serverTimestamp()
+    });
+    toast('Store details updated for customers and riders.');
+  } catch (error) {
+    console.error(error);
+    toast('Store details could not be saved.', true);
+  } finally {
+    setButtonBusy(button, false, 'Saving…', 'Save store details');
   }
 }
 
@@ -637,11 +736,8 @@ async function saveStoreImage() {
       imagePublicId: uploaded.imagePublicId,
       updatedAt: serverTimestamp()
     });
-    state.store.imageUrl = uploaded.imageUrl;
-    state.store.imagePublicId = uploaded.imagePublicId;
-    $('#profile-store-image').src = uploaded.imageUrl;
     $('#store-image-update').value = '';
-    toast('Store photo updated on merchant and customer pages.');
+    toast('Store photo updated on customer and merchant apps.');
   } catch (error) {
     console.error(error);
     toast(error.message || 'Store photo upload failed.', true);
@@ -650,10 +746,50 @@ async function saveStoreImage() {
   }
 }
 
+function playNewOrderTone() {
+  try {
+    const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+    if (!AudioContextClass) return;
+    const context = new AudioContextClass();
+    const oscillator = context.createOscillator();
+    const gain = context.createGain();
+    oscillator.type = 'sine';
+    oscillator.frequency.setValueAtTime(660, context.currentTime);
+    gain.gain.setValueAtTime(0.0001, context.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.12, context.currentTime + 0.02);
+    gain.gain.exponentialRampToValueAtTime(0.0001, context.currentTime + 0.32);
+    oscillator.connect(gain);
+    gain.connect(context.destination);
+    oscillator.start();
+    oscillator.stop(context.currentTime + 0.34);
+    oscillator.addEventListener('ended', () => context.close());
+  } catch (error) {
+    console.debug('Order tone unavailable:', error);
+  }
+}
+
+function updateOrderAlert() {
+  const count = state.orders.filter((order) => order.status === 'pending_merchant').length;
+  $('#orders-nav-badge').textContent = count > 99 ? '99+' : String(count);
+  $('#orders-nav-badge').classList.toggle('hidden', count === 0);
+  $('#new-order-alert-text').textContent = count === 1 ? '1 new order needs attention' : `${count} new orders need attention`;
+  $('#new-order-alert').classList.toggle('hidden', count === 0);
+}
+
 function startRealtime() {
-  state.unsubProducts?.();
-  state.unsubOrders?.();
-  state.unsubToday?.();
+  stopRealtime();
+  state.hasInitialOrderSnapshot = false;
+  state.knownPendingOrders = new Set();
+
+  state.unsubStore = onSnapshot(doc(db, 'stores', state.storeId), (snapshot) => {
+    if (!snapshot.exists()) return;
+    state.store = snapshot.data();
+    hydrateApp();
+  }, (error) => {
+    console.error(error);
+    toast('Store profile could not refresh.', true);
+  });
+
   state.unsubProducts = onSnapshot(
     query(collection(db, 'stores', state.storeId, 'products'), orderBy('createdAt', 'desc')),
     (snapshot) => {
@@ -665,29 +801,33 @@ function startRealtime() {
       toast('Products could not load.', true);
     }
   );
+
   state.unsubOrders = onSnapshot(
-    query(
-      collection(db, 'orders'),
-      where('storeId', '==', state.storeId),
-      orderBy('createdAt', 'desc'),
-      limit(50)
-    ),
+    query(collection(db, 'orders'), where('storeId', '==', state.storeId), orderBy('createdAt', 'desc'), limit(50)),
     (snapshot) => {
       state.orders = snapshot.docs.map((item) => ({ id: item.id, ...item.data() }));
+      const currentPending = new Set(state.orders.filter((order) => order.status === 'pending_merchant').map((order) => order.id));
+      if (state.hasInitialOrderSnapshot) {
+        const newPending = [...currentPending].filter((id) => !state.knownPendingOrders.has(id));
+        if (newPending.length) {
+          playNewOrderTone();
+          toast(newPending.length === 1 ? 'New order received.' : `${newPending.length} new orders received.`);
+        }
+      }
+      state.knownPendingOrders = currentPending;
+      state.hasInitialOrderSnapshot = true;
       renderAll();
+      updateOrderAlert();
       state.orders
-        .filter((order) => (
-          order.status === 'cancelled'
-          && order.inventoryReserved === true
-          && order.inventoryRestored !== true
-        ))
+        .filter((order) => order.status === 'cancelled' && order.inventoryReserved === true && order.inventoryRestored !== true)
         .forEach((order) => reconcileCancelledInventory(order.id));
     },
     (error) => {
       console.error(error);
-      toast('Orders could not load. Firestore rules or index may be missing.', true);
+      toast('Orders could not load. Check Firestore indexes.', true);
     }
   );
+
   const startOfToday = new Date();
   startOfToday.setHours(0, 0, 0, 0);
   state.unsubToday = onSnapshot(
@@ -704,34 +844,25 @@ function startRealtime() {
       renderStats();
     },
     (error) => {
-      console.error('Today sales listener failed:', error);
-      toast('Today sales could not load. Firestore index may be missing.', true);
+      console.error(error);
+      toast('Today’s sales could not load. Check Firestore indexes.', true);
     }
   );
-}
-
-function renderAll() {
-  renderStats();
-  renderProducts();
-  renderOrders();
-  renderInventory();
-  renderRecentOrders();
 }
 
 function renderStats() {
   const startOfToday = new Date();
   startOfToday.setHours(0, 0, 0, 0);
   const completed = state.todayCompleted.filter((order) => {
-    if (order.status !== 'completed') return false;
     const timestamp = order.completedAt || order.updatedAt;
     const completedAt = typeof timestamp?.toMillis === 'function'
       ? timestamp.toMillis()
       : Number(timestamp?.seconds || 0) * 1000;
-    return completedAt >= startOfToday.getTime();
+    return order.status === 'completed' && completedAt >= startOfToday.getTime();
   });
   const sales = completed.reduce((sum, order) => sum + Number(order.subtotal || order.totalAmount || 0), 0);
   $('#today-sales').textContent = money(sales);
-  $('#today-summary').textContent = `${completed.length} orders completed`;
+  $('#today-summary').textContent = `${completed.length} order${completed.length === 1 ? '' : 's'} completed today`;
   $('#new-orders-count').textContent = state.orders.filter((order) => order.status === 'pending_merchant').length;
   $('#preparing-count').textContent = state.orders.filter((order) => ['merchant_accepted', 'preparing'].includes(order.status)).length;
   $('#products-count').textContent = state.products.length;
@@ -742,9 +873,18 @@ function productCard(product, inventory = false) {
   const currentStockState = stockState(product);
   const image = `<img class="catalog-thumb${inventory ? ' inventory-thumb' : ''}" src="${safeImageUrl(product.imageUrl, product.name)}" alt="${escapeHtml(product.name)}">`;
   if (inventory) {
-    return `<article class="inventory-card product-card-with-image">${image}<div class="product-card-body"><div class="card-head"><div><h4>${escapeHtml(product.name)}</h4><p>${escapeHtml(product.unit || '')} · ${escapeHtml(product.category || '')}</p></div><span class="stock-chip ${currentStockState}">${currentStockState === 'ok' ? 'In stock' : currentStockState === 'low' ? 'Low stock' : 'Out of stock'}</span></div><div class="inventory-controls"><button data-stock="-1" data-id="${product.id}">−</button><strong>${Number(product.stockQuantity || 0)}</strong><button data-stock="1" data-id="${product.id}">+</button><span>${money(product.sellingPrice)}</span></div><div class="card-actions"><button data-edit-product="${product.id}">Edit product</button></div></div></article>`;
+    return `<article class="inventory-card product-card-with-image">${image}<div class="product-card-body"><div class="card-head"><div><h4>${escapeHtml(product.name)}</h4><p>${escapeHtml(product.unit || '')} · ${escapeHtml(product.category || '')}</p></div><span class="stock-chip ${currentStockState}">${currentStockState === 'ok' ? 'In stock' : currentStockState === 'low' ? 'Low stock' : 'Out of stock'}</span></div><div class="inventory-controls"><button data-stock="-1" data-id="${product.id}" type="button" aria-label="Decrease ${escapeHtml(product.name)} stock">−</button><strong>${Number(product.stockQuantity || 0)}</strong><button data-stock="1" data-id="${product.id}" type="button" aria-label="Increase ${escapeHtml(product.name)} stock">+</button><span>${money(product.sellingPrice)}</span></div><div class="card-actions"><button data-edit-product="${product.id}" type="button">Edit product</button></div></div></article>`;
   }
-  return `<article class="product-card product-card-with-image">${image}<div class="product-card-body"><div class="card-head"><div><h4>${escapeHtml(product.name)}</h4><p>${escapeHtml(product.brand || 'MyQK')} · ${escapeHtml(product.unit || '')}</p></div><div><div class="price">${money(product.sellingPrice)}</div><span class="stock-chip ${currentStockState}">${Number(product.stockQuantity || 0)} left</span></div></div><div class="card-actions"><button data-edit-product="${product.id}">Edit</button><button data-toggle-product="${product.id}" class="${product.isActive === false ? 'danger' : ''}">${product.isActive === false ? 'Activate' : 'Disable'}</button></div></div></article>`;
+  return `<article class="product-card product-card-with-image">${image}<div class="product-card-body"><div class="card-head"><div><h4>${escapeHtml(product.name)}</h4><p>${escapeHtml(product.brand || 'BuyQK')} · ${escapeHtml(product.unit || '')}</p></div><div><div class="price">${money(product.sellingPrice)}</div><span class="stock-chip ${currentStockState}">${Number(product.stockQuantity || 0)} left</span></div></div><div class="card-actions"><button data-edit-product="${product.id}" type="button">Edit</button><button data-toggle-product="${product.id}" type="button" class="${product.isActive === false ? 'danger' : ''}">${product.isActive === false ? 'Activate' : 'Disable'}</button></div></div></article>`;
+}
+
+function orderCard(order) {
+  return `<article class="order-card" data-order="${order.id}" tabindex="0" role="button"><div class="card-head"><div><h4>Order #${escapeHtml(order.orderNumber || order.id.slice(0, 6))}</h4><p>${escapeHtml(order.customerName || 'Customer')} · ${Number(order.itemCount || order.items?.length || 0)} items</p></div><span class="order-status ${escapeHtml(order.status)}">${escapeHtml(statusLabel(order.status))}</span></div><div class="order-meta"><span>${escapeHtml(order.paymentMode || 'Cash on Delivery')}</span><strong>${money(order.totalAmount)}</strong></div></article>`;
+}
+
+function lowStockCard(product) {
+  const currentStockState = stockState(product);
+  return `<article class="low-stock-card"><img class="catalog-thumb" src="${safeImageUrl(product.imageUrl, product.name)}" alt="${escapeHtml(product.name)}"><div class="product-card-body"><div class="card-head"><div><h4>${escapeHtml(product.name)}</h4><p>${escapeHtml(product.unit || '')}</p></div><span class="stock-chip ${currentStockState}">${Number(product.stockQuantity || 0)} left</span></div><div class="card-actions"><button data-view="inventory" type="button">Update stock</button></div></div></article>`;
 }
 
 function renderProducts() {
@@ -760,24 +900,6 @@ function renderInventory() {
   $('#inventory-list').innerHTML = list.length ? list.map((product) => productCard(product, true)).join('') : '<div class="empty-state">No products in this section.</div>';
 }
 
-function statusLabel(status) {
-  return ({
-    pending_merchant: 'New order',
-    merchant_accepted: 'Accepted',
-    preparing: 'Preparing',
-    ready_for_pickup: 'Ready for pickup',
-    accepted: 'Rider assigned',
-    picked_up: 'Picked up',
-    completed: 'Completed',
-    merchant_rejected: 'Rejected',
-    cancelled: 'Cancelled'
-  })[status] || status;
-}
-
-function orderCard(order) {
-  return `<article class="order-card" data-order="${order.id}"><div class="card-head"><div><h4>Order #${escapeHtml(order.orderNumber || order.id.slice(0, 6))}</h4><p>${escapeHtml(order.customerName || 'Customer')} · ${order.itemCount || order.items?.length || 0} items</p></div><span class="order-status">${escapeHtml(statusLabel(order.status))}</span></div><div class="order-meta"><span>${escapeHtml(order.paymentMode || 'Cash on Delivery')}</span><strong>${money(order.totalAmount)}</strong></div></article>`;
-}
-
 function renderOrders() {
   const list = state.orderFilter === 'all' ? state.orders : state.orders.filter((order) => order.status === state.orderFilter);
   $('#orders-list').innerHTML = list.length ? list.map(orderCard).join('') : '<div class="empty-state">No orders in this section.</div>';
@@ -785,7 +907,21 @@ function renderOrders() {
 
 function renderRecentOrders() {
   const list = state.orders.slice(0, 3);
-  $('#recent-orders').innerHTML = list.length ? list.map(orderCard).join('') : 'No merchant orders yet.';
+  $('#recent-orders').innerHTML = list.length ? list.map(orderCard).join('') : '<div class="empty-state compact">No merchant orders yet.</div>';
+}
+
+function renderLowStock() {
+  const list = state.products.filter((product) => stockState(product) !== 'ok').slice(0, 3);
+  $('#home-low-stock').innerHTML = list.length ? list.map(lowStockCard).join('') : '<div class="empty-state compact">Stock levels look good.</div>';
+}
+
+function renderAll() {
+  renderStats();
+  renderProducts();
+  renderInventory();
+  renderOrders();
+  renderRecentOrders();
+  renderLowStock();
 }
 
 function resetProductForm() {
@@ -798,6 +934,11 @@ function resetProductForm() {
   $('#product-image-status').textContent = cloudinaryReady()
     ? 'Required for a new product. One photo; compressed automatically.'
     : 'Cloudinary configuration is required before adding a product.';
+}
+
+function openAddProduct() {
+  resetProductForm();
+  openModal('product-modal');
 }
 
 function editProduct(id) {
@@ -816,7 +957,9 @@ function editProduct(id) {
   $('#product-image').value = '';
   $('#product-image-preview').src = safeImageUrl(product.imageUrl, product.name);
   $('#product-image-preview').classList.add('visible');
-  $('#product-image-status').textContent = product.imageUrl ? 'Current photo. Choose another photo only to replace it.' : 'This product has no photo. Add one before saving.';
+  $('#product-image-status').textContent = product.imageUrl
+    ? 'Current photo. Choose another only to replace it.'
+    : 'This product has no photo. Add one before saving.';
   $('#product-modal-title').textContent = 'Edit product';
   openModal('product-modal');
 }
@@ -831,19 +974,22 @@ async function saveProduct(event) {
   const existing = id ? state.products.find((product) => product.id === id) : null;
   const sellingPrice = Number($('#product-price').value);
   const mrp = Number($('#product-mrp').value);
-  if (sellingPrice > mrp) return toast('Selling price cannot be higher than MRP.', true);
+  const stockQuantity = Number($('#product-stock').value);
+  const lowStockThreshold = Number($('#product-threshold').value);
+  if (!Number.isFinite(mrp) || !Number.isFinite(sellingPrice) || sellingPrice > mrp) return toast('Selling price cannot be higher than MRP.', true);
+  if (!Number.isInteger(stockQuantity) || stockQuantity < 0) return toast('Stock quantity must be a whole number.', true);
+  if (!Number.isInteger(lowStockThreshold) || lowStockThreshold < 0) return toast('Low-stock alert must be a whole number.', true);
   if (!id && !imageFile) return toast('Add a product photo.', true);
   if (id && !existing?.imageUrl && !imageFile) return toast('Add a product photo.', true);
 
-  const submitButton = $('#product-form button[type="submit"]');
-  setButtonBusy(submitButton, true, 'Saving…', 'Save product');
+  const button = $('#product-form button[type="submit"]');
+  setButtonBusy(button, true, 'Saving…', 'Save product');
   try {
     const uploaded = await uploadImage(imageFile, {
       folder: `myqk/stores/${state.storeId}/products/${productReference.id}`,
       kind: 'product',
       statusElement: $('#product-image-status')
     });
-    const stockQuantity = Number($('#product-stock').value);
     const data = {
       storeId: state.storeId,
       merchantId: state.user.uid,
@@ -854,7 +1000,7 @@ async function saveProduct(event) {
       mrp,
       sellingPrice,
       stockQuantity,
-      lowStockThreshold: Number($('#product-threshold').value),
+      lowStockThreshold,
       description: $('#product-description').value.trim(),
       imageUrl: uploaded?.imageUrl || existing?.imageUrl || '',
       imagePublicId: uploaded?.imagePublicId || existing?.imagePublicId || '',
@@ -862,16 +1008,15 @@ async function saveProduct(event) {
       isAvailable: stockQuantity > 0,
       updatedAt: serverTimestamp()
     };
-
     if (id) await updateDoc(productReference, data);
     else await setDoc(productReference, { ...data, createdAt: serverTimestamp() });
     closeModal('product-modal');
-    toast(id ? 'Product updated on merchant and customer pages.' : 'Product added to inventory and customer app.');
+    toast(id ? 'Product updated for customers.' : 'Product added to your live catalog.');
   } catch (error) {
     console.error(error);
     toast(error.message || 'Product save failed.', true);
   } finally {
-    setButtonBusy(submitButton, false, 'Saving…', 'Save product');
+    setButtonBusy(button, false, 'Saving…', 'Save product');
   }
 }
 
@@ -883,7 +1028,9 @@ async function toggleProduct(id) {
       isActive: product.isActive === false,
       updatedAt: serverTimestamp()
     });
-  } catch {
+    toast(product.isActive === false ? 'Product activated.' : 'Product hidden from customers.');
+  } catch (error) {
+    console.error(error);
     toast('Product status update failed.', true);
   }
 }
@@ -896,9 +1043,13 @@ async function changeStock(id, delta) {
       if (!snapshot.exists()) throw new Error('NOT_FOUND');
       const before = Number(snapshot.data().stockQuantity || 0);
       const after = Math.max(0, before + delta);
-      transaction.update(reference, { stockQuantity: after, isAvailable: after > 0, updatedAt: serverTimestamp() });
-      const movement = doc(collection(db, 'stores', state.storeId, 'stockMovements'));
-      transaction.set(movement, {
+      if (after === before) return;
+      transaction.update(reference, {
+        stockQuantity: after,
+        isAvailable: after > 0,
+        updatedAt: serverTimestamp()
+      });
+      transaction.set(doc(collection(db, 'stores', state.storeId, 'stockMovements')), {
         productId: id,
         type: delta > 0 ? 'manual_add' : 'manual_remove',
         quantityChange: after - before,
@@ -917,16 +1068,18 @@ async function changeStock(id, delta) {
 function openOrder(id) {
   const order = state.orders.find((item) => item.id === id);
   if (!order) return;
-  const items = (order.items || []).map((item) => `<div class="order-item-row"><span>${item.quantity || 1} × ${escapeHtml(item.name)}</span><strong>${money(item.lineTotal || Number(item.unitPrice || 0) * Number(item.quantity || 1))}</strong></div>`).join('');
+  const items = (order.items || []).map((item) => `<div class="order-item-row"><span>${Number(item.quantity || 1)} × ${escapeHtml(item.name)}</span><strong>${money(item.lineTotal || Number(item.unitPrice || 0) * Number(item.quantity || 1))}</strong></div>`).join('');
   let actions = '';
-  if (order.status === 'pending_merchant') actions = `<div class="card-actions"><button data-order-action="merchant_rejected" data-id="${id}">Reject</button><button class="primary-action" data-order-action="merchant_accepted" data-id="${id}">Accept order</button></div>`;
-  if (order.status === 'merchant_accepted') actions = `<div class="card-actions"><button class="primary-action" data-order-action="preparing" data-id="${id}">Start preparing</button></div>`;
-  if (order.status === 'preparing') actions = `<div class="card-actions"><button class="primary-action" data-order-action="ready_for_pickup" data-id="${id}">Mark ready for pickup</button></div>`;
-  $('#order-detail-content').innerHTML = `<p><strong>${escapeHtml(order.customerName || 'Customer')}</strong><br>${escapeHtml(order.drop?.address || order.dropAddress || '')}</p><div class="order-items">${items || 'No item details'}</div><div class="order-meta"><span>${escapeHtml(statusLabel(order.status))}</span><strong>${money(order.totalAmount)}</strong></div>${actions}`;
+  if (order.status === 'pending_merchant') actions = `<div class="card-actions"><button data-order-action="merchant_rejected" data-id="${id}" type="button">Reject</button><button class="primary-action" data-order-action="merchant_accepted" data-id="${id}" type="button">Accept order</button></div>`;
+  if (order.status === 'merchant_accepted') actions = `<div class="card-actions"><button class="primary-action" data-order-action="preparing" data-id="${id}" type="button">Start preparing</button></div>`;
+  if (order.status === 'preparing') actions = `<div class="card-actions"><button class="primary-action" data-order-action="ready_for_pickup" data-id="${id}" type="button">Mark ready for pickup</button></div>`;
+  $('#order-modal-title').textContent = `Order #${order.orderNumber || order.id.slice(0, 6)}`;
+  $('#order-detail-content').innerHTML = `<div class="order-customer"><strong>${escapeHtml(order.customerName || 'Customer')}</strong><p>${escapeHtml(order.drop?.address || order.dropAddress || 'Delivery address unavailable')}</p></div><div class="order-items">${items || '<div class="order-item-row"><span>No item details</span></div>'}</div><div class="order-meta"><span>${escapeHtml(statusLabel(order.status))} · ${escapeHtml(order.paymentMode || 'Cash on Delivery')}</span><strong>${money(order.totalAmount)}</strong></div>${actions}`;
   openModal('order-modal');
 }
 
 async function orderAction(id, next) {
+  if (next === 'merchant_rejected' && !window.confirm('Reject this order?')) return;
   const reference = doc(db, 'orders', id);
   try {
     await runTransaction(db, async (transaction) => {
@@ -941,6 +1094,7 @@ async function orderAction(id, next) {
       };
       if (!allowed[order.status]?.includes(next)) throw new Error('INVALID_STATUS');
       const update = { status: next, updatedAt: serverTimestamp() };
+
       if (next === 'merchant_accepted') {
         if (order.inventoryReserved === true) {
           update.merchantAcceptedAt = serverTimestamp();
@@ -948,18 +1102,10 @@ async function orderAction(id, next) {
           const storeSnapshot = await transaction.get(doc(db, 'stores', state.storeId));
           if (!storeSnapshot.exists()) throw new Error('STORE_NOT_FOUND');
           const store = storeSnapshot.data();
-          if (store.isApproved !== true || store.status !== 'active') {
-            throw new Error('STORE_NOT_APPROVED');
-          }
-          const deliveryDistance = distanceKm(
-            store.location,
-            order.drop?.location || order.dropLocation
-          );
+          if (store.isApproved !== true || store.status !== 'active') throw new Error('STORE_NOT_APPROVED');
+          const deliveryDistance = distanceKm(store.location, order.drop?.location || order.dropLocation);
           const deliveryRadius = Number(store.deliveryRadiusKm || 0);
-          if (
-            !Number.isFinite(deliveryDistance)
-            || (deliveryRadius > 0 && deliveryDistance > deliveryRadius)
-          ) {
+          if (!Number.isFinite(deliveryDistance) || (deliveryRadius > 0 && deliveryDistance > deliveryRadius)) {
             throw new Error('OUT_OF_DELIVERY_RADIUS');
           }
 
@@ -967,22 +1113,14 @@ async function orderAction(id, next) {
           for (const item of order.items || []) {
             const productId = String(item.productId || '');
             const quantity = Number(item.quantity);
-            if (!productId || !Number.isInteger(quantity) || quantity <= 0) {
-              throw new Error('INVALID_ORDER_ITEMS');
-            }
+            if (!productId || !Number.isInteger(quantity) || quantity <= 0) throw new Error('INVALID_ORDER_ITEMS');
             quantities.set(productId, (quantities.get(productId) || 0) + quantity);
           }
           if (!quantities.size) throw new Error('INVALID_ORDER_ITEMS');
 
-          const productReferences = [...quantities.keys()].map((productId) => (
-            doc(db, 'stores', state.storeId, 'products', productId)
-          ));
-          const productSnapshots = await Promise.all(
-            productReferences.map((productReference) => transaction.get(productReference))
-          );
-          const products = new Map(
-            productSnapshots.map((productSnapshot) => [productSnapshot.id, productSnapshot])
-          );
+          const productReferences = [...quantities.keys()].map((productId) => doc(db, 'stores', state.storeId, 'products', productId));
+          const productSnapshots = await Promise.all(productReferences.map((productReference) => transaction.get(productReference)));
+          const products = new Map(productSnapshots.map((productSnapshot) => [productSnapshot.id, productSnapshot]));
 
           let verifiedSubtotal = 0;
           for (const item of order.items) {
@@ -992,12 +1130,8 @@ async function orderAction(id, next) {
             const unitPrice = Number(item.unitPrice);
             const currentPrice = Number(product.sellingPrice);
             const quantity = Number(item.quantity);
-            if (product.isActive === false || product.isAvailable === false) {
-              throw new Error(`${product.name || 'Product'} is unavailable`);
-            }
-            if (!Number.isFinite(unitPrice) || Math.abs(unitPrice - currentPrice) > 0.001) {
-              throw new Error(`${product.name || 'Product'} price changed`);
-            }
+            if (product.isActive === false || product.isAvailable === false) throw new Error(`${product.name || 'Product'} is unavailable`);
+            if (!Number.isFinite(unitPrice) || Math.abs(unitPrice - currentPrice) > 0.001) throw new Error(`${product.name || 'Product'} price changed`);
             verifiedSubtotal += currentPrice * quantity;
           }
 
@@ -1010,17 +1144,13 @@ async function orderAction(id, next) {
             || Math.abs(Number(order.deliveryFee) - deliveryFee) > 0.01
             || Math.abs(Number(order.platformFee) - platformFee) > 0.01
             || Math.abs(Number(order.totalAmount) - totalAmount) > 0.01
-          ) {
-            throw new Error('ORDER_TOTAL_MISMATCH');
-          }
+          ) throw new Error('ORDER_TOTAL_MISMATCH');
 
           for (const [productId, quantity] of quantities) {
             const productSnapshot = products.get(productId);
             const product = productSnapshot.data();
             const before = Number(product.stockQuantity || 0);
-            if (!Number.isInteger(before) || before < quantity) {
-              throw new Error(`${product.name || 'Product'} is out of stock`);
-            }
+            if (!Number.isInteger(before) || before < quantity) throw new Error(`${product.name || 'Product'} is out of stock`);
             const after = before - quantity;
             transaction.update(productSnapshot.ref, {
               stockQuantity: after,
@@ -1055,14 +1185,13 @@ async function orderAction(id, next) {
   } catch (error) {
     console.error(error);
     const message = String(error?.message || '');
-    toast(
-      /out of stock|unavailable|price changed|ORDER_TOTAL_MISMATCH|OUT_OF_DELIVERY_RADIUS/.test(message)
-        ? `Order cannot be accepted: ${message
-          .replace('ORDER_TOTAL_MISMATCH', 'bill details are invalid')
-          .replace('OUT_OF_DELIVERY_RADIUS', 'delivery address is outside the store area')}.`
-        : 'Order status update failed.',
-      true
-    );
+    const readable = message
+      .replace('ORDER_TOTAL_MISMATCH', 'bill details are invalid')
+      .replace('OUT_OF_DELIVERY_RADIUS', 'delivery address is outside the store area')
+      .replace('STORE_NOT_APPROVED', 'store approval is still pending');
+    toast(/out of stock|unavailable|price changed|ORDER_TOTAL_MISMATCH|OUT_OF_DELIVERY_RADIUS|STORE_NOT_APPROVED/.test(message)
+      ? `Order cannot be accepted: ${readable}.`
+      : 'Order status update failed.', true);
   }
 }
 
@@ -1070,48 +1199,29 @@ async function reconcileCancelledInventory(id) {
   if (state.reconcilingOrders.has(id)) return;
   state.reconcilingOrders.add(id);
   const orderReference = doc(db, 'orders', id);
-
   try {
     await runTransaction(db, async (transaction) => {
       const orderSnapshot = await transaction.get(orderReference);
       if (!orderSnapshot.exists()) return;
       const order = orderSnapshot.data();
-      if (
-        order.storeId !== state.storeId
-        || order.status !== 'cancelled'
-        || order.inventoryReserved !== true
-        || order.inventoryRestored === true
-      ) return;
+      if (order.storeId !== state.storeId || order.status !== 'cancelled' || order.inventoryReserved !== true || order.inventoryRestored === true) return;
 
       const quantities = new Map();
       for (const item of order.items || []) {
         const productId = String(item.productId || '');
         const quantity = Number(item.quantity);
-        if (!productId || !Number.isInteger(quantity) || quantity <= 0) {
-          throw new Error('INVALID_ORDER_ITEMS');
-        }
+        if (!productId || !Number.isInteger(quantity) || quantity <= 0) throw new Error('INVALID_ORDER_ITEMS');
         quantities.set(productId, (quantities.get(productId) || 0) + quantity);
       }
-
-      const productReferences = [...quantities.keys()].map((productId) => (
-        doc(db, 'stores', state.storeId, 'products', productId)
-      ));
-      const productSnapshots = await Promise.all(
-        productReferences.map((productReference) => transaction.get(productReference))
-      );
-      if (productSnapshots.some((productSnapshot) => !productSnapshot.exists())) {
-        throw new Error('PRODUCT_NOT_FOUND');
-      }
+      const productReferences = [...quantities.keys()].map((productId) => doc(db, 'stores', state.storeId, 'products', productId));
+      const productSnapshots = await Promise.all(productReferences.map((productReference) => transaction.get(productReference)));
+      if (productSnapshots.some((productSnapshot) => !productSnapshot.exists())) throw new Error('PRODUCT_NOT_FOUND');
 
       for (const productSnapshot of productSnapshots) {
         const quantity = quantities.get(productSnapshot.id);
         const before = Number(productSnapshot.data().stockQuantity || 0);
         const after = before + quantity;
-        transaction.update(productSnapshot.ref, {
-          stockQuantity: after,
-          isAvailable: true,
-          updatedAt: serverTimestamp()
-        });
+        transaction.update(productSnapshot.ref, { stockQuantity: after, isAvailable: true, updatedAt: serverTimestamp() });
         transaction.set(doc(collection(db, 'stores', state.storeId, 'stockMovements')), {
           productId: productSnapshot.id,
           orderId: id,
@@ -1123,7 +1233,6 @@ async function reconcileCancelledInventory(id) {
           createdAt: serverTimestamp()
         });
       }
-
       transaction.update(orderReference, {
         inventoryRestored: true,
         inventoryRestoredAt: serverTimestamp(),
@@ -1143,9 +1252,8 @@ function switchView(name) {
   $('#main-content').scrollTop = 0;
 }
 
-function openAddProduct() {
-  resetProductForm();
-  openModal('product-modal');
+function digitsOnly(event) {
+  event.target.value = event.target.value.replace(/\D/g, '').slice(0, 10);
 }
 
 document.addEventListener('click', (event) => {
@@ -1167,6 +1275,11 @@ document.addEventListener('click', (event) => {
   if (action) orderAction(action.dataset.id, action.dataset.orderAction);
 });
 
+document.addEventListener('keydown', (event) => {
+  if (event.key === 'Escape') $$('.modal.open').forEach((modal) => closeModal(modal.id));
+  if (event.key === 'Enter' && event.target.matches('[data-order]')) openOrder(event.target.dataset.order);
+});
+
 $('#google-login-btn').addEventListener('click', login);
 $('#logout-btn').addEventListener('click', logout);
 $('#onboarding-logout-btn').addEventListener('click', logout);
@@ -1174,26 +1287,28 @@ $('#business-form').addEventListener('submit', createBusiness);
 $('#location-btn').addEventListener('click', requestLocation);
 $('#manual-address-btn').addEventListener('click', () => openManualAddress(true));
 $('#shop-address').addEventListener('input', () => {
-  if ($('#shop-address').dataset.source === 'detected') {
-    state.resolvedAddress = null;
-  }
+  if ($('#shop-address').dataset.source === 'detected') state.resolvedAddress = null;
   $('#shop-address').dataset.source = 'manual';
   $('#location-status').textContent = state.location
     ? 'Location pin saved. The address was edited manually.'
     : 'Manual shop address added.';
 });
 $('#shop-toggle').addEventListener('click', toggleShop);
+$('#store-settings-form').addEventListener('submit', saveStoreSettings);
 $('#save-store-image-btn').addEventListener('click', saveStoreImage);
 $('#add-product-btn').addEventListener('click', openAddProduct);
 $('#add-inventory-product-btn').addEventListener('click', openAddProduct);
 $('#home-add-product-btn').addEventListener('click', openAddProduct);
 $('#product-form').addEventListener('submit', saveProduct);
-$('#product-search').addEventListener('input', (event) => { state.productFilter = event.target.value; renderProducts(); });
+$('#product-search').addEventListener('input', (event) => {
+  state.productFilter = event.target.value;
+  renderProducts();
+});
 $('#shop-image').addEventListener('change', () => previewSelectedFile(
   $('#shop-image'),
   $('#shop-image-preview'),
   $('#shop-image-status'),
-  'Required. JPG, PNG or WebP; compressed automatically.'
+  'Required. The photo is compressed before upload.'
 ));
 $('#product-image').addEventListener('change', () => previewSelectedFile(
   $('#product-image'),
@@ -1201,12 +1316,18 @@ $('#product-image').addEventListener('change', () => previewSelectedFile(
   $('#product-image-status'),
   $('#product-id').value ? 'Choose a photo only to replace the current one.' : 'Required for a new product.'
 ));
-$('#store-image-update').addEventListener('change', () => previewSelectedFile(
-  $('#store-image-update'),
-  $('#profile-store-image'),
-  $('#store-image-update-status'),
-  'Choose a new cover photo and save.'
-));
+$('#store-image-update').addEventListener('change', () => {
+  const file = $('#store-image-update').files?.[0];
+  if (!file) return;
+  try {
+    validateImageFile(file);
+    $('#store-image-update-status').textContent = `${(file.size / 1024 / 1024).toFixed(1)} MB selected. Save to upload.`;
+  } catch (error) {
+    $('#store-image-update').value = '';
+    $('#store-image-update-status').textContent = error.message;
+    toast(error.message, true);
+  }
+});
 $$('[data-filter]').forEach((button) => button.addEventListener('click', () => {
   $$('[data-filter]').forEach((item) => item.classList.remove('active'));
   button.classList.add('active');
@@ -1219,7 +1340,8 @@ $$('[data-stock-filter]').forEach((button) => button.addEventListener('click', (
   state.stockFilter = button.dataset.stockFilter;
   renderInventory();
 }));
-$('#owner-phone').addEventListener('input', (event) => { event.target.value = event.target.value.replace(/\D/g, '').slice(0, 10); });
+$('#owner-phone').addEventListener('input', digitsOnly);
+$('#settings-phone').addEventListener('input', digitsOnly);
 
 document.addEventListener('error', (event) => {
   if (!(event.target instanceof HTMLImageElement)) return;
@@ -1229,9 +1351,20 @@ document.addEventListener('error', (event) => {
   image.src = placeholderImage(image.alt || 'QK');
 }, true);
 
+window.addEventListener('beforeunload', stopRealtime);
+
+getRedirectResult(auth).catch((error) => {
+  console.error(error);
+  if (error.code === 'auth/unauthorized-domain') toast('Add this deployed domain to Firebase Authorized domains.', true);
+});
+
 onAuthStateChanged(auth, async (user) => {
   state.user = user;
   if (!user) {
+    stopRealtime();
+    state.merchant = null;
+    state.store = null;
+    state.storeId = null;
     showScreen('login-screen');
     return;
   }
@@ -1244,11 +1377,12 @@ onAuthStateChanged(auth, async (user) => {
       return;
     }
     hydrateApp();
+    renderAll();
     startRealtime();
     showScreen('app-screen');
   } catch (error) {
     console.error(error);
-    toast('Merchant data could not load. Check Firestore rules.', true);
+    toast(error.message || 'Merchant data could not load. Check Firestore rules.', true);
     showScreen('login-screen');
   }
 });

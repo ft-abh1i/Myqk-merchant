@@ -3,181 +3,247 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
-  <meta name="theme-color" content="#f8cb46">
-  <title>MyQK Merchant</title>
+  <meta name="theme-color" content="#061a3b">
+  <meta name="description" content="BuyQK Merchant — manage store, products, inventory and live orders.">
+  <title>BuyQK Merchant</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="styles.css">
-  <style>
-    .image-field { display: grid; gap: 10px; }
-    .image-field input[type="file"] { width: 100%; padding: 11px; border: 1px dashed #cbd5e1; border-radius: 14px; background: #f8fafc; }
-    .image-preview { display: none; width: 100%; aspect-ratio: 4 / 3; object-fit: cover; border-radius: 16px; border: 1px solid #e5e7eb; background: #f3f4f6; }
-    .image-preview.visible { display: block; }
-    .image-hint { margin: 0; font-size: 12px; color: #64748b; line-height: 1.45; }
-    .profile-store-cover { width: 100%; aspect-ratio: 16 / 9; object-fit: cover; border-radius: 18px; margin: 0 0 16px; background: #f3f4f6; }
-    .profile-image-editor { display: grid; gap: 10px; margin-top: 16px; text-align: left; }
-    .profile-image-editor input[type="file"] { width: 100%; padding: 10px; border: 1px dashed #cbd5e1; border-radius: 12px; background: #fff; }
-    .product-card-with-image { display: grid; grid-template-columns: 82px minmax(0, 1fr); gap: 12px; align-items: stretch; }
-    .catalog-thumb { width: 82px; height: 82px; object-fit: cover; border-radius: 14px; background: #f3f4f6; }
-    .product-card-body { min-width: 0; display: grid; gap: 10px; }
-    .location-block { display: grid; gap: 10px; margin-bottom: 16px; }
-    .location-manual-btn { width: 100%; border: 1px solid #d1d5db; background: #fff; color: #1f2937; border-radius: 15px; min-height: 48px; padding: 12px 16px; font-weight: 800; }
-    .manual-address-panel { border: 1px solid #e5e7eb; border-radius: 18px; padding: 14px; background: #fff; }
-    .manual-address-panel.hidden { display: none; }
-    .manual-address-panel label { margin-bottom: 8px; }
-    .manual-address-panel .image-hint { margin-top: 8px; }
-    .quick-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin: -8px 0 22px; }
-    .quick-actions button { border: 0; border-radius: 15px; padding: 13px 12px; min-height: 48px; font-weight: 800; }
-    .quick-actions .quick-primary { background: #f8cb46; color: #111827; }
-    .quick-actions .quick-secondary { background: #fff; color: #111827; border: 1px solid #e5e7eb; }
-    @media (max-width: 380px) {
-      .product-card-with-image { grid-template-columns: 68px minmax(0, 1fr); }
-      .catalog-thumb { width: 68px; height: 68px; }
-    }
-  </style>
+  <link rel="stylesheet" href="styles.css?v=20260802-merchant-rebuild-1">
 </head>
 <body>
-  <div id="toast" class="toast" role="status"></div>
+  <div class="app-frame">
+    <section class="screen active center-screen loading-screen" id="loading-screen" aria-label="Loading BuyQK Merchant">
+      <div class="brand-mark" aria-hidden="true"><span>QK</span></div>
+      <h1>BuyQK Merchant</h1>
+      <div class="loader" aria-hidden="true"></div>
+      <p>Connecting your store…</p>
+    </section>
 
-  <section id="loading-screen" class="screen active center-screen">
-    <div class="brand-mark">QK</div>
-    <h1>MyQK Merchant</h1>
-    <p>Loading your business workspace…</p>
-  </section>
-
-  <section id="login-screen" class="screen center-screen login-screen">
-    <div class="login-card">
-      <div class="brand-mark">QK</div>
-      <small>MYQK FOR BUSINESS</small>
-      <h1>Manage your store from one place</h1>
-      <p>List products, control stock, prepare orders and grow your local business.</p>
-      <button id="google-login-btn" class="primary-btn google-btn" type="button">Continue with Google</button>
-      <p class="legal">By continuing, you agree to MyQK Merchant Terms.</p>
-    </div>
-  </section>
-
-  <section id="onboarding-screen" class="screen onboarding-screen">
-    <header class="simple-header">
-      <div><small>SET UP YOUR BUSINESS</small><h2>Create store profile</h2></div>
-      <button id="onboarding-logout-btn" class="text-btn" type="button">Logout</button>
-    </header>
-    <form id="business-form" class="form-card">
-      <label>Owner name<input id="owner-name" required maxlength="60"></label>
-      <label>Phone number<input id="owner-phone" required inputmode="numeric" maxlength="10" placeholder="10-digit mobile number"></label>
-      <label>Shop name<input id="shop-name" required maxlength="80"></label>
-      <label>Business category
-        <select id="shop-category" required>
-          <option value="">Select category</option>
-          <option>Grocery</option>
-          <option>Medical &amp; Pharmacy</option>
-          <option>Fruits &amp; Vegetables</option>
-          <option>Restaurant &amp; Cafe</option>
-          <option>Bakery</option>
-          <option>Dairy</option>
-          <option>Electronics</option>
-          <option>Stationery</option>
-          <option>Other</option>
-        </select>
-      </label>
-      <label>Business description<textarea id="shop-description" rows="3" maxlength="240" placeholder="What do you sell?"></textarea></label>
-      <label class="image-field">Store cover photo
-        <input id="shop-image" type="file" accept="image/jpeg,image/png,image/webp" required>
-        <img id="shop-image-preview" class="image-preview" alt="Selected store cover preview">
-        <span id="shop-image-status" class="image-hint">Required. JPG, PNG or WebP; compressed automatically.</span>
-      </label>
-      <div class="field-grid">
-        <label>Opening time<input id="opening-time" type="time" value="08:00" required></label>
-        <label>Closing time<input id="closing-time" type="time" value="22:00" required></label>
-      </div>
-      <div class="location-block">
-        <button id="location-btn" class="secondary-btn" type="button">Use current shop location</button>
-        <button id="manual-address-btn" class="location-manual-btn" type="button">Add address manually</button>
-        <p id="location-status" class="hint">Use GPS to detect the shop area, or add the address manually.</p>
-        <div id="manual-address-panel" class="manual-address-panel hidden">
-          <label>Full shop address<textarea id="shop-address" rows="3" maxlength="220" placeholder="Shop number, street, area, landmark, city, PIN code"></textarea></label>
-          <p class="image-hint">Verify the detected address or enter the exact pickup address for riders.</p>
+    <section class="screen login-screen" id="login-screen">
+      <div class="login-visual" aria-hidden="true">
+        <div class="login-orb orb-one"></div>
+        <div class="login-orb orb-two"></div>
+        <div class="brand-mark large"><span>QK</span></div>
+        <div class="merchant-badge">
+          <svg viewBox="0 0 24 24"><path d="M4 10h16M5 10l1-6h12l1 6M6 10v10h12V10M9 20v-5h6v5"/></svg>
+          <span>Merchant</span>
         </div>
       </div>
-      <label class="check-row"><input id="terms-check" type="checkbox" required><span>I confirm the business details are correct and accept merchant terms.</span></label>
-      <button id="complete-setup-btn" class="primary-btn" type="submit">Create business profile</button>
-    </form>
-  </section>
+      <div class="login-panel">
+        <p class="eyebrow">SELL LOCALLY. GROW QUICKLY.</p>
+        <h1>Your business,<br>always in control.</h1>
+        <p class="login-copy">Manage live orders, products and inventory from one mobile-first dashboard.</p>
+        <button class="google-button" id="google-login-btn" type="button">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path fill="#4285F4" d="M21.6 12.23c0-.71-.06-1.39-.18-2.05H12v3.87h5.38a4.6 4.6 0 0 1-2 3.02v2.51h3.24c1.9-1.75 2.98-4.33 2.98-7.35Z"/><path fill="#34A853" d="M12 22c2.7 0 4.97-.9 6.62-2.42l-3.24-2.51c-.9.6-2.05.96-3.38.96-2.61 0-4.82-1.76-5.61-4.13H3.05v2.59A10 10 0 0 0 12 22Z"/><path fill="#FBBC05" d="M6.39 13.9A6 6 0 0 1 6.08 12c0-.66.11-1.3.31-1.9V7.51H3.05A10 10 0 0 0 2 12c0 1.61.38 3.14 1.05 4.49l3.34-2.59Z"/><path fill="#EA4335" d="M12 5.97c1.47 0 2.79.51 3.83 1.5l2.87-2.88A9.64 9.64 0 0 0 12 2a10 10 0 0 0-8.95 5.51l3.34 2.59C7.18 7.73 9.39 5.97 12 5.97Z"/></svg>
+          Continue with Google
+        </button>
+        <p class="legal-copy">By continuing, you agree to the BuyQK merchant terms and privacy policy.</p>
+      </div>
+    </section>
 
-  <section id="app-screen" class="screen app-screen">
-    <header class="app-header">
-      <div><small id="header-greeting">MY STORE</small><h2 id="header-store-name">MyQK Store</h2></div>
-      <button id="shop-toggle" class="status-toggle open" type="button">Open</button>
-    </header>
-    <main id="main-content" class="main-content">
-      <section id="home-view" class="view active">
-        <div class="hero-card"><div><small>TODAY'S SALES</small><h1 id="today-sales">₹0</h1><p id="today-summary">0 orders completed</p></div><div class="hero-chip">LIVE</div></div>
-        <div class="stats-grid"><article><span>New orders</span><strong id="new-orders-count">0</strong></article><article><span>Preparing</span><strong id="preparing-count">0</strong></article><article><span>Products</span><strong id="products-count">0</strong></article><article><span>Low stock</span><strong id="low-stock-count">0</strong></article></div>
-        <div class="quick-actions"><button id="home-add-product-btn" class="quick-primary" type="button">Add product</button><button class="quick-secondary" data-go="inventory" type="button">View inventory</button></div>
-        <div class="section-head"><div><small>LIVE ACTIVITY</small><h3>Recent orders</h3></div><button class="link-btn" data-go="orders">View all</button></div>
-        <div id="recent-orders" class="stack-list empty-state">No merchant orders yet.</div>
-      </section>
+    <section class="screen onboarding-screen" id="onboarding-screen">
+      <header class="plain-header">
+        <div class="brand-inline"><span class="brand-mini">QK</span><strong>Merchant setup</strong></div>
+        <button class="text-button" id="onboarding-logout-btn" type="button">Sign out</button>
+      </header>
+      <main class="onboarding-content">
+        <div class="step-pill">ONE-TIME SETUP</div>
+        <h1>Let’s build your store.</h1>
+        <p>Add accurate details so customers and riders can find your business.</p>
 
-      <section id="products-view" class="view">
-        <div class="section-head sticky-head"><div><small>CATALOG</small><h2>Products</h2></div><button id="add-product-btn" class="mini-primary">+ Add</button></div>
-        <input id="product-search" class="search-input" placeholder="Search products">
-        <div id="products-list" class="stack-list"></div>
-      </section>
+        <form id="business-form" class="form-stack">
+          <section class="form-card">
+            <div class="section-title">
+              <span class="section-icon"><svg viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/><path d="M5 21c.8-4.2 3.1-6.3 7-6.3s6.2 2.1 7 6.3"/></svg></span>
+              <div><small>OWNER</small><h2>Your details</h2></div>
+            </div>
+            <label class="field"><span>Full name</span><input id="owner-name" type="text" maxlength="60" autocomplete="name" required placeholder="Owner’s full name"></label>
+            <label class="field"><span>Phone number</span><div class="phone-field"><b>+91</b><input id="owner-phone" type="tel" inputmode="numeric" maxlength="10" autocomplete="tel" required placeholder="10-digit mobile number"></div></label>
+          </section>
 
-      <section id="orders-view" class="view">
-        <div class="section-head sticky-head"><div><small>ORDER MANAGEMENT</small><h2>Orders</h2></div></div>
-        <div class="filter-row" id="order-filters"><button class="filter active" data-filter="all">All</button><button class="filter" data-filter="pending_merchant">New</button><button class="filter" data-filter="preparing">Preparing</button><button class="filter" data-filter="ready_for_pickup">Ready</button></div>
-        <div id="orders-list" class="stack-list"></div>
-      </section>
+          <section class="form-card">
+            <div class="section-title">
+              <span class="section-icon"><svg viewBox="0 0 24 24"><path d="M4 10h16M5 10l1-6h12l1 6M6 10v10h12V10M9 20v-5h6v5"/></svg></span>
+              <div><small>BUSINESS</small><h2>Store information</h2></div>
+            </div>
+            <label class="field"><span>Store name</span><input id="shop-name" type="text" maxlength="80" required placeholder="Example: Gupta General Store"></label>
+            <label class="field"><span>Category</span><select id="shop-category" required><option value="">Select category</option><option value="groceries">Grocery</option><option value="food">Food & Restaurant</option><option value="pharmacy">Pharmacy</option><option value="beauty">Beauty</option><option value="kids">Kids</option><option value="electronics">Electronics</option><option value="services">Services</option><option value="other">Other</option></select></label>
+            <label class="field"><span>Short description</span><textarea id="shop-description" maxlength="180" rows="3" required placeholder="What do you sell?"></textarea></label>
+            <div class="field-row">
+              <label class="field"><span>Opening time</span><input id="opening-time" type="time" value="09:00" required></label>
+              <label class="field"><span>Closing time</span><input id="closing-time" type="time" value="21:00" required></label>
+            </div>
+          </section>
 
-      <section id="inventory-view" class="view">
-        <div class="section-head sticky-head"><div><small>STOCK CONTROL</small><h2>Inventory</h2></div><button id="add-inventory-product-btn" class="mini-primary">+ Add</button></div>
-        <div class="inventory-tabs"><button class="filter active" data-stock-filter="all">All</button><button class="filter" data-stock-filter="low">Low stock</button><button class="filter" data-stock-filter="out">Out</button></div>
-        <div id="inventory-list" class="stack-list"></div>
-      </section>
+          <section class="form-card">
+            <div class="section-title">
+              <span class="section-icon"><svg viewBox="0 0 24 24"><path d="M12 22s7-7.58 7-13A7 7 0 1 0 5 9c0 5.42 7 13 7 13Z"/><circle cx="12" cy="9" r="2.4"/></svg></span>
+              <div><small>PICKUP</small><h2>Shop location</h2></div>
+            </div>
+            <button class="secondary-button location-button" id="location-btn" type="button"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="7"/><circle cx="12" cy="12" r="2"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3"/></svg>Use current shop location</button>
+            <button class="link-button" id="manual-address-btn" type="button">Add address manually</button>
+            <p class="field-help" id="location-status">Use GPS to detect the shop area, or add the address manually.</p>
+            <div class="hidden" id="manual-address-panel"><label class="field"><span>Full shop address</span><textarea id="shop-address" rows="3" maxlength="240" placeholder="Shop number, road, area, city, state and PIN code"></textarea></label></div>
+          </section>
 
-      <section id="profile-view" class="view">
-        <div class="profile-card">
-          <img id="profile-store-image" class="profile-store-cover" alt="Store cover">
-          <div class="avatar" id="profile-avatar">M</div>
-          <h2 id="profile-store-name">Store</h2>
-          <p id="profile-owner-email">—</p>
-          <span id="profile-status" class="approval-chip">Active store</span>
-          <div class="profile-image-editor">
-            <label>Change store cover photo<input id="store-image-update" type="file" accept="image/jpeg,image/png,image/webp"></label>
-            <p id="store-image-update-status" class="image-hint">Choose a new cover photo and save.</p>
-            <button id="save-store-image-btn" class="secondary-btn" type="button">Save store photo</button>
+          <section class="form-card">
+            <div class="section-title">
+              <span class="section-icon"><svg viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="3"/><circle cx="9" cy="10" r="2"/><path d="m5 17 4-4 3 3 2-2 5 3"/></svg></span>
+              <div><small>PHOTO</small><h2>Store cover</h2></div>
+            </div>
+            <label class="upload-box" for="shop-image"><input id="shop-image" type="file" accept="image/jpeg,image/png,image/webp" required><img id="shop-image-preview" alt="Selected store cover preview"><span class="upload-placeholder"><svg viewBox="0 0 24 24"><path d="M12 16V4M7 9l5-5 5 5M4 15v5h16v-5"/></svg><strong>Choose store photo</strong><small>JPG, PNG or WebP</small></span></label>
+            <p class="field-help" id="shop-image-status">Required. The photo is compressed before upload.</p>
+          </section>
+
+          <label class="check-row"><input id="terms-check" type="checkbox" required><span>I confirm these business details are accurate.</span></label>
+          <button class="primary-button sticky-submit" id="complete-setup-btn" type="submit">Create business profile</button>
+        </form>
+      </main>
+    </section>
+
+    <section class="screen app-screen" id="app-screen">
+      <header class="app-header">
+        <div class="header-brand">
+          <span class="brand-mini">QK</span>
+          <div><small>BUYQK MERCHANT</small><strong id="header-store-name">Your store</strong></div>
+        </div>
+        <button class="status-toggle" id="shop-toggle" type="button">Open</button>
+      </header>
+
+      <button class="new-order-alert hidden" id="new-order-alert" type="button" data-view="orders">
+        <span class="pulse-dot"></span><strong id="new-order-alert-text">New order received</strong><span>View</span>
+      </button>
+      <div class="approval-banner hidden" id="approval-banner">
+        <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v6M12 17h.01"/></svg>
+        <div><strong>Store approval pending</strong><p>You can finish products and inventory now. The store becomes visible to customers after approval.</p></div>
+      </div>
+
+      <main class="main-content" id="main-content">
+        <section class="view active" id="home-view">
+          <div class="home-hero">
+            <div><p class="eyebrow gold">TODAY’S OVERVIEW</p><h1>Keep business moving.</h1><p id="today-summary">Live data from your store</p></div>
+            <div class="hero-sales"><small>Sales</small><strong id="today-sales">₹0</strong></div>
           </div>
-        </div>
-        <div class="settings-list"><button data-action="edit-business">Business profile <span>›</span></button><button data-action="support">Merchant support <span>›</span></button><button id="logout-btn">Logout <span>›</span></button></div>
-      </section>
-    </main>
-    <nav class="bottom-nav"><button class="nav-btn active" data-view="home">Home</button><button class="nav-btn" data-view="products">Products</button><button class="nav-btn" data-view="orders">Orders</button><button class="nav-btn" data-view="inventory">Inventory</button><button class="nav-btn" data-view="profile">Profile</button></nav>
-  </section>
 
-  <div id="product-modal" class="modal" aria-hidden="true">
-    <div class="modal-panel">
-      <div class="modal-head"><h2 id="product-modal-title">Add product</h2><button data-close-modal="product-modal">×</button></div>
-      <form id="product-form">
-        <input id="product-id" type="hidden">
-        <label>Product name<input id="product-name" required maxlength="100"></label>
-        <div class="field-grid"><label>Category<input id="product-category" required maxlength="60"></label><label>Brand<input id="product-brand" maxlength="60"></label></div>
-        <label>Unit<input id="product-unit" required placeholder="500 ml, 1 kg, 1 pack"></label>
-        <div class="field-grid"><label>MRP<input id="product-mrp" type="number" min="0" step="0.01" required></label><label>Selling price<input id="product-price" type="number" min="0" step="0.01" required></label></div>
-        <div class="field-grid"><label>Stock quantity<input id="product-stock" type="number" min="0" step="1" required></label><label>Low stock at<input id="product-threshold" type="number" min="0" step="1" value="5" required></label></div>
-        <label>Description<textarea id="product-description" rows="3" maxlength="240"></textarea></label>
-        <label class="image-field">Product photo
-          <input id="product-image" type="file" accept="image/jpeg,image/png,image/webp">
-          <img id="product-image-preview" class="image-preview" alt="Selected product photo preview">
-          <span id="product-image-status" class="image-hint">Required for a new product. One photo; compressed automatically.</span>
-        </label>
-        <button class="primary-btn" type="submit">Save product</button>
-      </form>
-    </div>
+          <div class="stats-grid">
+            <button class="stat-card accent" type="button" data-go="orders"><span class="stat-icon"><svg viewBox="0 0 24 24"><path d="M6 3h12v18H6z"/><path d="M9 8h6M9 12h6M9 16h3"/></svg></span><strong id="new-orders-count">0</strong><small>New orders</small></button>
+            <button class="stat-card" type="button" data-go="orders"><span class="stat-icon orange"><svg viewBox="0 0 24 24"><path d="M8 4h8l2 4v12H6V8l2-4Z"/><path d="M9 12h6"/></svg></span><strong id="preparing-count">0</strong><small>Preparing</small></button>
+            <button class="stat-card" type="button" data-go="products"><span class="stat-icon blue"><svg viewBox="0 0 24 24"><path d="M4 7h16v13H4zM7 4h10v3H7z"/><path d="M8 12h8"/></svg></span><strong id="products-count">0</strong><small>Products</small></button>
+            <button class="stat-card" type="button" data-go="inventory"><span class="stat-icon red"><svg viewBox="0 0 24 24"><path d="M12 3 3 7.5 12 12l9-4.5L12 3Z"/><path d="m3 12 9 4.5 9-4.5M3 16.5 12 21l9-4.5"/></svg></span><strong id="low-stock-count">0</strong><small>Low stock</small></button>
+          </div>
+
+          <section class="content-section">
+            <div class="section-head"><div><small>SHORTCUTS</small><h2>Quick actions</h2></div></div>
+            <div class="quick-grid">
+              <button class="quick-action primary" id="home-add-product-btn" type="button"><span><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg></span><div><strong>Add product</strong><small>Publish to your store</small></div></button>
+              <button class="quick-action" type="button" data-go="orders"><span><svg viewBox="0 0 24 24"><path d="M6 3h12v18H6z"/><path d="M9 8h6M9 12h6M9 16h3"/></svg></span><div><strong>Manage orders</strong><small>Accept and prepare</small></div></button>
+            </div>
+          </section>
+
+          <section class="content-section">
+            <div class="section-head"><div><small>LIVE QUEUE</small><h2>Recent orders</h2></div><button class="section-link" type="button" data-go="orders">View all</button></div>
+            <div class="stack-list" id="recent-orders"><div class="empty-state compact">No merchant orders yet.</div></div>
+          </section>
+
+          <section class="content-section last-section">
+            <div class="section-head"><div><small>ATTENTION</small><h2>Low inventory</h2></div><button class="section-link" type="button" data-go="inventory">Manage</button></div>
+            <div class="stack-list" id="home-low-stock"><div class="empty-state compact">Stock levels look good.</div></div>
+          </section>
+        </section>
+
+        <section class="view" id="orders-view">
+          <div class="page-title"><div><p class="eyebrow">LIVE OPERATIONS</p><h1>Orders</h1><p>Accept, prepare and hand over orders.</p></div></div>
+          <div class="chip-row" role="group" aria-label="Order filters"><button class="filter-chip active" data-filter="all" type="button">All</button><button class="filter-chip" data-filter="pending_merchant" type="button">New</button><button class="filter-chip" data-filter="merchant_accepted" type="button">Accepted</button><button class="filter-chip" data-filter="preparing" type="button">Preparing</button><button class="filter-chip" data-filter="ready_for_pickup" type="button">Ready</button></div>
+          <div class="stack-list page-list" id="orders-list"><div class="empty-state">No orders in this section.</div></div>
+        </section>
+
+        <section class="view" id="products-view">
+          <div class="page-title action-title"><div><p class="eyebrow">CATALOG</p><h1>Products</h1><p>Everything visible in your customer store.</p></div><button class="square-add" id="add-product-btn" type="button" aria-label="Add product">+</button></div>
+          <label class="search-field"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="m20 20-4-4"/></svg><input id="product-search" type="search" placeholder="Search products" autocomplete="off"></label>
+          <div class="stack-list page-list" id="products-list"><div class="empty-state">No products added yet.</div></div>
+        </section>
+
+        <section class="view" id="inventory-view">
+          <div class="page-title action-title"><div><p class="eyebrow">STOCK CONTROL</p><h1>Inventory</h1><p>Update live quantities with one tap.</p></div><button class="square-add" id="add-inventory-product-btn" type="button" aria-label="Add inventory product">+</button></div>
+          <div class="chip-row" role="group" aria-label="Stock filters"><button class="filter-chip active" data-stock-filter="all" type="button">All stock</button><button class="filter-chip" data-stock-filter="low" type="button">Low</button><button class="filter-chip" data-stock-filter="out" type="button">Out</button></div>
+          <div class="stack-list page-list" id="inventory-list"><div class="empty-state">No products in this section.</div></div>
+        </section>
+
+        <section class="view" id="store-view">
+          <div class="page-title"><div><p class="eyebrow">BUSINESS PROFILE</p><h1>Your store</h1><p>Keep customer-facing details accurate.</p></div></div>
+          <section class="store-cover-card">
+            <img id="profile-store-image" alt="Store cover">
+            <div class="cover-shade"></div>
+            <div class="store-cover-copy"><span class="profile-avatar" id="profile-avatar">Q</span><div><h2 id="profile-store-name">Your store</h2><p id="profile-status">Pending approval</p></div></div>
+          </section>
+
+          <form class="form-card store-settings" id="store-settings-form">
+            <div class="section-title compact-title"><div><small>STORE DETAILS</small><h2>Customer information</h2></div></div>
+            <label class="field"><span>Store name</span><input id="settings-store-name" type="text" maxlength="80" required></label>
+            <label class="field"><span>Category</span><select id="settings-category" required><option value="groceries">Grocery</option><option value="food">Food & Restaurant</option><option value="pharmacy">Pharmacy</option><option value="beauty">Beauty</option><option value="kids">Kids</option><option value="electronics">Electronics</option><option value="services">Services</option><option value="other">Other</option></select></label>
+            <label class="field"><span>Description</span><textarea id="settings-description" maxlength="180" rows="3" required></textarea></label>
+            <label class="field"><span>Store phone</span><input id="settings-phone" type="tel" inputmode="numeric" maxlength="10" required></label>
+            <label class="field"><span>Address</span><textarea id="settings-address" maxlength="240" rows="3" required></textarea></label>
+            <div class="field-row"><label class="field"><span>Opens</span><input id="settings-opening-time" type="time" required></label><label class="field"><span>Closes</span><input id="settings-closing-time" type="time" required></label></div>
+            <div class="field-row"><label class="field"><span>Minimum order</span><input id="settings-minimum-order" type="number" min="0" step="1" required></label><label class="field"><span>Delivery radius (km)</span><input id="settings-radius" type="number" min="1" max="50" step="1" required></label></div>
+            <button class="primary-button" id="save-store-settings-btn" type="submit">Save store details</button>
+          </form>
+
+          <section class="form-card">
+            <div class="section-title compact-title"><div><small>COVER PHOTO</small><h2>Store image</h2></div></div>
+            <label class="upload-row" for="store-image-update"><input id="store-image-update" type="file" accept="image/jpeg,image/png,image/webp"><span><svg viewBox="0 0 24 24"><path d="M12 16V4M7 9l5-5 5 5M4 15v5h16v-5"/></svg></span><div><strong>Choose a new photo</strong><small id="store-image-update-status">JPG, PNG or WebP</small></div></label>
+            <button class="secondary-button" id="save-store-image-btn" type="button">Save store photo</button>
+          </section>
+
+          <section class="account-card">
+            <div><small>SIGNED IN AS</small><strong id="profile-owner-email">—</strong></div>
+            <button class="danger-button" id="logout-btn" type="button">Sign out</button>
+          </section>
+          <p class="version-label">BuyQK Merchant MVP · Firebase connected</p>
+        </section>
+      </main>
+
+      <nav class="bottom-nav" aria-label="Merchant navigation">
+        <button class="nav-btn active" data-view="home" type="button"><svg viewBox="0 0 24 24"><path d="M3 11.5 12 4l9 7.5"/><path d="M5.5 10.5V21h13V10.5"/><path d="M9 21v-6h6v6"/></svg><span>Home</span></button>
+        <button class="nav-btn" data-view="orders" type="button"><span class="nav-icon-wrap"><svg viewBox="0 0 24 24"><path d="M6 3h12v18H6z"/><path d="M9 8h6M9 12h6M9 16h3"/></svg><i class="nav-badge hidden" id="orders-nav-badge">0</i></span><span>Orders</span></button>
+        <button class="nav-btn" data-view="products" type="button"><svg viewBox="0 0 24 24"><path d="M4 7h16v13H4zM7 4h10v3H7z"/><path d="M8 12h8"/></svg><span>Products</span></button>
+        <button class="nav-btn" data-view="inventory" type="button"><svg viewBox="0 0 24 24"><path d="M12 3 3 7.5 12 12l9-4.5L12 3Z"/><path d="m3 12 9 4.5 9-4.5M3 16.5 12 21l9-4.5"/></svg><span>Inventory</span></button>
+        <button class="nav-btn" data-view="store" type="button"><svg viewBox="0 0 24 24"><path d="M4 10h16M5 10l1-6h12l1 6M6 10v10h12V10M9 20v-5h6v5"/></svg><span>Store</span></button>
+      </nav>
+    </section>
   </div>
 
-  <div id="order-modal" class="modal" aria-hidden="true"><div class="modal-panel"><div class="modal-head"><h2>Order details</h2><button data-close-modal="order-modal">×</button></div><div id="order-detail-content"></div></div></div>
+  <section class="modal" id="product-modal" aria-hidden="true" role="dialog" aria-modal="true" aria-labelledby="product-modal-title">
+    <button class="modal-backdrop" type="button" data-close-modal="product-modal" aria-label="Close product form"></button>
+    <div class="sheet-panel">
+      <div class="sheet-handle" aria-hidden="true"></div>
+      <div class="sheet-header"><div><small>CATALOG ITEM</small><h2 id="product-modal-title">Add product</h2></div><button class="close-button" type="button" data-close-modal="product-modal" aria-label="Close">×</button></div>
+      <form id="product-form" class="sheet-content form-stack">
+        <input id="product-id" type="hidden">
+        <label class="upload-box product-upload" for="product-image"><input id="product-image" type="file" accept="image/jpeg,image/png,image/webp"><img id="product-image-preview" alt="Product image preview"><span class="upload-placeholder"><svg viewBox="0 0 24 24"><path d="M12 16V4M7 9l5-5 5 5M4 15v5h16v-5"/></svg><strong>Add product photo</strong><small>Required for new products</small></span></label>
+        <p class="field-help" id="product-image-status">Required for a new product.</p>
+        <label class="field"><span>Product name</span><input id="product-name" type="text" maxlength="90" required placeholder="Example: Full cream milk"></label>
+        <div class="field-row"><label class="field"><span>Category</span><input id="product-category" type="text" maxlength="50" required placeholder="Dairy"></label><label class="field"><span>Brand</span><input id="product-brand" type="text" maxlength="50" placeholder="Brand name"></label></div>
+        <label class="field"><span>Unit / pack size</span><input id="product-unit" type="text" maxlength="40" required placeholder="500 ml, 1 kg, 6 pcs"></label>
+        <div class="field-row"><label class="field"><span>MRP (₹)</span><input id="product-mrp" type="number" min="0" step="0.01" required></label><label class="field"><span>Selling price (₹)</span><input id="product-price" type="number" min="0" step="0.01" required></label></div>
+        <div class="field-row"><label class="field"><span>Stock quantity</span><input id="product-stock" type="number" min="0" step="1" required></label><label class="field"><span>Low-stock alert</span><input id="product-threshold" type="number" min="0" step="1" value="5" required></label></div>
+        <label class="field"><span>Description</span><textarea id="product-description" maxlength="220" rows="3" placeholder="Optional product details"></textarea></label>
+        <button class="primary-button" type="submit">Save product</button>
+      </form>
+    </div>
+  </section>
 
-  <script type="module" src="app.js"></script>
+  <section class="modal" id="order-modal" aria-hidden="true" role="dialog" aria-modal="true" aria-labelledby="order-modal-title">
+    <button class="modal-backdrop" type="button" data-close-modal="order-modal" aria-label="Close order details"></button>
+    <div class="sheet-panel order-sheet">
+      <div class="sheet-handle" aria-hidden="true"></div>
+      <div class="sheet-header"><div><small>LIVE ORDER</small><h2 id="order-modal-title">Order details</h2></div><button class="close-button" type="button" data-close-modal="order-modal" aria-label="Close">×</button></div>
+      <div class="sheet-content" id="order-detail-content"></div>
+    </div>
+  </section>
+
+  <div class="toast" id="toast" role="status" aria-live="polite"></div>
+  <script type="module" src="app.js?v=20260802-merchant-rebuild-1"></script>
 </body>
 </html>

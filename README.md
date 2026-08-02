@@ -1,33 +1,36 @@
-# MyQK Merchant
+# BuyQK Merchant
 
-Mobile-first merchant web app for the MyQK local commerce platform.
+Mobile-first merchant MVP for the BuyQK local commerce platform.
 
-## Included
+## Working flows
 
-- Firebase Google login
-- Merchant and store onboarding
-- Live shop open/closed control
-- Product catalog management
-- Inventory and stock movement tracking
-- Realtime merchant order queue
-- Order status flow: pending merchant → accepted → preparing → ready for pickup
-- Unified Firestore rules for customer, merchant and rider apps
+- Firebase Google sign-in with mobile redirect fallback
+- One-time merchant and store onboarding
+- GPS or verified manual pickup location
+- Compressed Cloudinary store and product images
+- Realtime products, inventory and merchant order queue
+- Transaction-safe stock adjustments and stock movement audit records
+- Secure order flow: `pending_merchant` → `merchant_accepted` → `preparing` → `ready_for_pickup`
+- Automatic reserved-stock restoration after eligible cancellations
+- Live completed-order sales totals
+- Customer-facing store settings and open/closed control
 
-## Firebase setup
+## Shared backend
 
-Use the shared Firebase project `buyqk-rider`.
+The app uses the shared Firebase project configured in `firebase-config.js` and preserves the collection contracts used by `Myqk-demo` and `Myqk-rider`:
 
-1. Enable Google authentication.
+- `merchants/{merchantId}`
+- `stores/{storeId}`
+- `stores/{storeId}/products/{productId}`
+- `stores/{storeId}/stockMovements/{movementId}`
+- `orders/{orderId}`
+
+New stores are created with `accountStatus: pending`, `isApproved: false`, and `status: pending_approval`. Approval must be performed through a trusted admin process. Merchants cannot approve themselves through the browser.
+
+## Setup
+
+1. Enable Google sign-in in Firebase Authentication.
 2. Add the deployed merchant domain to Firebase Authorized domains.
-3. Deploy rules and indexes with `firebase deploy --only firestore`.
-4. Approve new stores from a trusted Admin SDK service or Firebase Console by
-   setting the merchant `accountStatus` to `active`, then the store
-   `isApproved` to `true` and `status` to `active`.
-5. Deploy the repository to Vercel.
-
-Merchants cannot approve their own accounts. A web admin panel must use an
-`admin: true` Firebase Auth custom claim set by a trusted server.
-
-## Required order shape
-
-Customer orders must include `merchantId`, `storeId`, and begin with status `pending_merchant`. Rider apps should query `ready_for_pickup` orders rather than `pending` orders.
+3. Deploy `firestore.rules` and `firestore.indexes.json` from this repository.
+4. Keep only the public Cloudinary cloud name and unsigned upload preset in `cloudinary-config.js`; never commit an API secret.
+5. Deploy the repository as a static site.
