@@ -156,7 +156,6 @@ svg {
 }
 
 .loader {
-.loader {
   width: 25px;
   height: 25px;
   margin: 12px 0 2px;
@@ -170,7 +169,6 @@ svg {
   to { transform: rotate(360deg); }
 }
 
-.eyebrow,
 .eyebrow,
 .section-head small,
 .section-title small,
@@ -188,7 +186,6 @@ svg {
   color: var(--yellow);
 }
 
-.onboarding-screen {
 .onboarding-screen {
   min-height: 100dvh;
   overflow-y: auto;
