@@ -188,10 +188,10 @@ service cloud.firestore {
       allow create: if isOwner(merchantId)
         && request.resource.data.uid == request.auth.uid
         && request.resource.data.onboardingComplete == true
-        && request.resource.data.accountStatus == 'pending'
+        && request.resource.data.accountStatus in ['pending', 'active']
         && existsAfter(/databases/$(database)/documents/stores/$(request.resource.data.storeId))
         && getAfter(/databases/$(database)/documents/stores/$(request.resource.data.storeId)).data.merchantId == request.auth.uid
-        && getAfter(/databases/$(database)/documents/stores/$(request.resource.data.storeId)).data.status == 'pending_approval';
+        && getAfter(/databases/$(database)/documents/stores/$(request.resource.data.storeId)).data.status in ['pending_approval', 'active'];
       allow read: if isOwner(merchantId) || isAdmin();
       allow update: if isOwner(merchantId)
         && request.resource.data.uid == resource.data.uid
@@ -268,8 +268,16 @@ service cloud.firestore {
     match /stores/{storeId} {
       allow create: if signedIn()
         && request.resource.data.merchantId == request.auth.uid
-        && request.resource.data.isApproved == false
-        && request.resource.data.status == 'pending_approval'
+        && (
+          (
+            request.resource.data.isApproved == true
+            && request.resource.data.status == 'active'
+          )
+          || (
+            request.resource.data.isApproved == false
+            && request.resource.data.status == 'pending_approval'
+          )
+        )
         && request.resource.data.isOpen == true
         && request.resource.data.minimumOrder is number
         && request.resource.data.minimumOrder >= 0
@@ -284,12 +292,23 @@ service cloud.firestore {
         && request.resource.data.merchantId == resource.data.merchantId
         && request.resource.data.rating == resource.data.rating
         && request.resource.data.totalRatings == resource.data.totalRatings
-        && request.resource.data.isApproved == resource.data.isApproved
-        && request.resource.data.status == resource.data.status
+        && (
+          (
+            request.resource.data.isApproved == resource.data.isApproved
+            && request.resource.data.status == resource.data.status
+          )
+          || (
+            resource.data.isApproved == false
+            && resource.data.status == 'pending_approval'
+            && request.resource.data.isApproved == true
+            && request.resource.data.status == 'active'
+          )
+        )
         && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
           'name', 'category', 'description', 'phone', 'address', 'location',
           'openingTime', 'closingTime', 'isOpen', 'minimumOrder',
-          'deliveryRadiusKm', 'imageUrl', 'imagePublicId', 'updatedAt'
+          'deliveryRadiusKm', 'imageUrl', 'imagePublicId',
+          'isApproved', 'status', 'updatedAt'
         ])
         && validPoint(request.resource.data.location);
       allow update: if isAdmin();
