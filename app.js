@@ -325,7 +325,6 @@ function previewSelectedFile(input, preview, status, requiredText) {
   }
 }
 
-function stopRealtime()
 function stopRealtime() {
   state.unsubStore?.();
   state.unsubProducts?.();
@@ -337,7 +336,6 @@ function stopRealtime() {
   state.unsubToday = null;
 }
 
-async function loadMerchant()
 async function loadMerchant() {
   const merchantSnapshot = await getDoc(doc(db, 'merchants', state.user.uid));
   state.merchant = merchantSnapshot.exists() ? merchantSnapshot.data() : null;
