@@ -79,8 +79,9 @@ function toast(message, error = false) {
   toast.timer = window.setTimeout(() => { element.className = 'toast'; }, 3400);
 }
 
-function showScreen(id) {
-  $('.screen').forEach((screen) => screen.classList.toggle('active', screen.id === id));
+function showScreen() {
+  const dashboard = $('#app-screen');
+  if (dashboard) dashboard.classList.add('active');
 }
 
 function setButtonBusy(button, busy, busyText, normalText) {
@@ -1485,5 +1486,14 @@ async function startAuthentication() {
   onAuthStateChanged(auth, handleAuthState);
 }
 
-showDashboardShell();
-startAuthentication();
+try {
+  showDashboardShell();
+} catch (error) {
+  console.error('Dashboard shell initialization failed.', error);
+  showScreen();
+}
+
+startAuthentication().catch((error) => {
+  console.error('Background authentication failed.', error);
+  showScreen();
+});
