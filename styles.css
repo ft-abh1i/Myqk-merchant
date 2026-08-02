@@ -155,20 +155,7 @@ svg {
   letter-spacing: -1px;
 }
 
-.brand-mark.large {
-  width: 92px;
-  height: 92px;
-  border-radius: 27px;
-}
-
-.brand-mark.large::after {
-  border-radius: 20px;
-}
-
-.brand-mark.large span {
-  font-size: 30px;
-}
-
+.loader {
 .loader {
   width: 25px;
   height: 25px;
@@ -183,83 +170,7 @@ svg {
   to { transform: rotate(360deg); }
 }
 
-.login-screen {
-  overflow-y: auto;
-  background: #fff;
-}
-
-.login-visual {
-  position: relative;
-  min-height: 45dvh;
-  display: grid;
-  place-items: center;
-  overflow: hidden;
-  border-radius: 0 0 38px 38px;
-  background:
-    radial-gradient(circle at 50% 42%, rgba(31, 76, 137, .95), transparent 34%),
-    linear-gradient(155deg, #061a3b, #0d326b);
-}
-
-.login-visual::before {
-  position: absolute;
-  inset: 0;
-  content: "";
-  opacity: .24;
-  background-image: linear-gradient(rgba(255,255,255,.09) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,.09) 1px, transparent 1px);
-  background-size: 34px 34px;
-  mask-image: linear-gradient(to bottom, #000, transparent 94%);
-}
-
-.login-orb {
-  position: absolute;
-  border-radius: 50%;
-  filter: blur(2px);
-}
-
-.orb-one {
-  width: 170px;
-  height: 170px;
-  top: -65px;
-  right: -55px;
-  background: rgba(247, 207, 63, .16);
-}
-
-.orb-two {
-  width: 120px;
-  height: 120px;
-  bottom: -55px;
-  left: -35px;
-  background: rgba(255, 255, 255, .08);
-}
-
-.merchant-badge {
-  position: absolute;
-  left: 50%;
-  bottom: 26px;
-  display: flex;
-  align-items: center;
-  gap: 7px;
-  transform: translateX(-50%);
-  padding: 8px 12px;
-  border: 1px solid rgba(255, 255, 255, .14);
-  border-radius: 999px;
-  background: rgba(5, 18, 43, .68);
-  backdrop-filter: blur(12px);
-  color: #fff;
-  font-size: 12px;
-  font-weight: 700;
-}
-
-.merchant-badge svg {
-  width: 17px;
-  height: 17px;
-  color: var(--yellow);
-}
-
-.login-panel {
-  padding: 34px 24px max(28px, var(--safe-bottom));
-}
-
+.eyebrow,
 .eyebrow,
 .section-head small,
 .section-title small,
@@ -277,52 +188,7 @@ svg {
   color: var(--yellow);
 }
 
-.login-panel h1 {
-  margin: 8px 0 12px;
-  color: var(--navy);
-  font-size: clamp(32px, 9vw, 46px);
-  line-height: 1.06;
-  letter-spacing: -1.8px;
-}
-
-.login-copy {
-  max-width: 520px;
-  margin: 0 0 25px;
-  color: var(--muted);
-  font-size: 14px;
-  line-height: 1.65;
-}
-
-.google-button {
-  width: 100%;
-  min-height: 56px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 12px;
-  border: 1px solid #dbe1ea;
-  border-radius: 17px;
-  background: #fff;
-  box-shadow: 0 8px 24px rgba(12, 34, 68, .08);
-  color: var(--ink);
-  font-size: 14px;
-  font-weight: 750;
-}
-
-.google-button svg {
-  width: 21px;
-  height: 21px;
-  stroke: none;
-}
-
-.legal-copy {
-  margin: 16px 8px 0;
-  color: #98a2b2;
-  text-align: center;
-  font-size: 10px;
-  line-height: 1.5;
-}
-
+.onboarding-screen {
 .onboarding-screen {
   min-height: 100dvh;
   overflow-y: auto;
@@ -1697,7 +1563,6 @@ svg {
 }
 
 @media (min-width: 600px) {
-  .login-panel,
   .onboarding-content {
     padding-right: 30px;
     padding-left: 30px;
