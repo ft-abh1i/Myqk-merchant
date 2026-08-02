@@ -9,83 +9,17 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="styles.css?v=20260802-anonymous-auth-1">
+  <link rel="stylesheet" href="styles.css?v=20260802-direct-dashboard-1">
 </head>
 <body>
   <div class="app-frame">
-    <section class="screen active center-screen loading-screen" id="loading-screen" aria-label="Loading BuyQK Merchant">
-      <div class="brand-mark" aria-hidden="true"><span>QK</span></div>
-      <h1>BuyQK Merchant</h1>
-      <div class="loader" aria-hidden="true"></div>
-      <p id="loading-message">Starting your secure session…</p>
-    </section>
-
-    <section class="screen onboarding-screen" id="onboarding-screen">
-      <header class="plain-header">
-        <div class="brand-inline"><span class="brand-mini">QK</span><strong>Merchant setup</strong></div>
-      </header>
-      <main class="onboarding-content">
-        <div class="step-pill">ONE-TIME SETUP</div>
-        <h1>Let’s build your store.</h1>
-        <p>Add accurate details so customers and riders can find your business.</p>
-
-        <form id="business-form" class="form-stack">
-          <section class="form-card">
-            <div class="section-title">
-              <span class="section-icon"><svg viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/><path d="M5 21c.8-4.2 3.1-6.3 7-6.3s6.2 2.1 7 6.3"/></svg></span>
-              <div><small>OWNER</small><h2>Your details</h2></div>
-            </div>
-            <label class="field"><span>Full name</span><input id="owner-name" type="text" maxlength="60" autocomplete="name" required placeholder="Owner’s full name"></label>
-            <label class="field"><span>Phone number</span><div class="phone-field"><b>+91</b><input id="owner-phone" type="tel" inputmode="numeric" maxlength="10" autocomplete="tel" required placeholder="10-digit mobile number"></div></label>
-          </section>
-
-          <section class="form-card">
-            <div class="section-title">
-              <span class="section-icon"><svg viewBox="0 0 24 24"><path d="M4 10h16M5 10l1-6h12l1 6M6 10v10h12V10M9 20v-5h6v5"/></svg></span>
-              <div><small>BUSINESS</small><h2>Store information</h2></div>
-            </div>
-            <label class="field"><span>Store name</span><input id="shop-name" type="text" maxlength="80" required placeholder="Example: Gupta General Store"></label>
-            <label class="field"><span>Category</span><select id="shop-category" required><option value="">Select category</option><option value="groceries">Grocery</option><option value="food">Food & Restaurant</option><option value="pharmacy">Pharmacy</option><option value="beauty">Beauty</option><option value="kids">Kids</option><option value="electronics">Electronics</option><option value="services">Services</option><option value="other">Other</option></select></label>
-            <label class="field"><span>Short description</span><textarea id="shop-description" maxlength="180" rows="3" required placeholder="What do you sell?"></textarea></label>
-            <div class="field-row">
-              <label class="field"><span>Opening time</span><input id="opening-time" type="time" value="09:00" required></label>
-              <label class="field"><span>Closing time</span><input id="closing-time" type="time" value="21:00" required></label>
-            </div>
-          </section>
-
-          <section class="form-card">
-            <div class="section-title">
-              <span class="section-icon"><svg viewBox="0 0 24 24"><path d="M12 22s7-7.58 7-13A7 7 0 1 0 5 9c0 5.42 7 13 7 13Z"/><circle cx="12" cy="9" r="2.4"/></svg></span>
-              <div><small>PICKUP</small><h2>Shop location</h2></div>
-            </div>
-            <button class="secondary-button location-button" id="location-btn" type="button"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="7"/><circle cx="12" cy="12" r="2"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3"/></svg>Use current shop location</button>
-            <button class="link-button" id="manual-address-btn" type="button">Add address manually</button>
-            <p class="field-help" id="location-status">Use GPS to detect the shop area, or add the address manually.</p>
-            <div class="hidden" id="manual-address-panel"><label class="field"><span>Full shop address</span><textarea id="shop-address" rows="3" maxlength="240" placeholder="Shop number, road, area, city, state and PIN code"></textarea></label></div>
-          </section>
-
-          <section class="form-card">
-            <div class="section-title">
-              <span class="section-icon"><svg viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="3"/><circle cx="9" cy="10" r="2"/><path d="m5 17 4-4 3 3 2-2 5 3"/></svg></span>
-              <div><small>PHOTO</small><h2>Store cover</h2></div>
-            </div>
-            <label class="upload-box" for="shop-image"><input id="shop-image" type="file" accept="image/jpeg,image/png,image/webp" required><img id="shop-image-preview" alt="Selected store cover preview"><span class="upload-placeholder"><svg viewBox="0 0 24 24"><path d="M12 16V4M7 9l5-5 5 5M4 15v5h16v-5"/></svg><strong>Choose store photo</strong><small>JPG, PNG or WebP</small></span></label>
-            <p class="field-help" id="shop-image-status">Required. The photo is compressed before upload.</p>
-          </section>
-
-          <label class="check-row"><input id="terms-check" type="checkbox" required><span>I confirm these business details are accurate.</span></label>
-          <button class="primary-button sticky-submit" id="complete-setup-btn" type="submit">Create business profile</button>
-        </form>
-      </main>
-    </section>
-
-    <section class="screen app-screen" id="app-screen">
+    <section class="screen app-screen active" id="app-screen">
       <header class="app-header">
         <div class="header-brand">
           <span class="brand-mini">QK</span>
           <div><small>BUYQK MERCHANT</small><strong id="header-store-name">Your store</strong></div>
         </div>
-        <button class="status-toggle" id="shop-toggle" type="button">Open</button>
+        <button class="status-toggle closed" id="shop-toggle" type="button" disabled>Setup</button>
       </header>
 
       <button class="new-order-alert hidden" id="new-order-alert" type="button" data-view="orders">
@@ -93,7 +27,7 @@
       </button>
       <div class="approval-banner hidden" id="approval-banner">
         <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v6M12 17h.01"/></svg>
-        <div><strong>Store approval pending</strong><p>You can finish products and inventory now. The store becomes visible to customers after approval.</p></div>
+        <div><strong id="approval-title">Store setup required</strong><p id="approval-copy">Open the Store tab and save your details to connect the dashboard.</p></div>
       </div>
 
       <main class="main-content" id="main-content">
@@ -217,6 +151,6 @@
   </section>
 
   <div class="toast" id="toast" role="status" aria-live="polite"></div>
-  <script type="module" src="app.js?v=20260802-anonymous-auth-1"></script>
+  <script type="module" src="app.js?v=20260802-direct-dashboard-1"></script>
 </body>
 </html>
