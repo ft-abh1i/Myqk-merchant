@@ -2,13 +2,11 @@ import { firebaseConfig } from './firebase-config.js';
 import { cloudinaryConfig } from './cloudinary-config.js';
 import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.12.5/firebase-app.js';
 import {
+  browserLocalPersistence,
   getAuth,
-  getRedirectResult,
-  GoogleAuthProvider,
   onAuthStateChanged,
-  signInWithPopup,
-  signInWithRedirect,
-  signOut
+  setPersistence,
+  signInAnonymously
 } from 'https://www.gstatic.com/firebasejs/10.12.5/firebase-auth.js';
 import {
   collection,
@@ -82,7 +80,12 @@ function toast(message, error = false) {
 }
 
 function showScreen(id) {
-  $$('.screen').forEach((screen) => screen.classList.toggle('active', screen.id === id));
+  $('.screen').forEach((screen) => screen.classList.toggle('active', screen.id === id));
+}
+
+function setLoadingMessage(message) {
+  const element = $('#loading-message');
+  if (element) element.textContent = message;
 }
 
 function setButtonBusy(button, busy, busyText, normalText) {
@@ -322,27 +325,7 @@ function previewSelectedFile(input, preview, status, requiredText) {
   }
 }
 
-async function login() {
-  const button = $('#google-login-btn');
-  setButtonBusy(button, true, 'Connecting…', 'Continue with Google');
-  const provider = new GoogleAuthProvider();
-  provider.setCustomParameters({ prompt: 'select_account' });
-  try {
-    await signInWithPopup(auth, provider);
-  } catch (error) {
-    if (['auth/popup-blocked', 'auth/cancelled-popup-request', 'auth/operation-not-supported-in-this-environment'].includes(error.code)) {
-      await signInWithRedirect(auth, provider);
-      return;
-    }
-    console.error(error);
-    toast(error.code === 'auth/unauthorized-domain'
-      ? 'Add this deployed domain to Firebase Authorized domains.'
-      : 'Google login failed. Please retry.', true);
-  } finally {
-    setButtonBusy(button, false, 'Connecting…', 'Continue with Google');
-  }
-}
-
+function stopRealtime()
 function stopRealtime() {
   state.unsubStore?.();
   state.unsubProducts?.();
@@ -354,11 +337,7 @@ function stopRealtime() {
   state.unsubToday = null;
 }
 
-async function logout() {
-  stopRealtime();
-  await signOut(auth);
-}
-
+async function loadMerchant()
 async function loadMerchant() {
   const merchantSnapshot = await getDoc(doc(db, 'merchants', state.user.uid));
   state.merchant = merchantSnapshot.exists() ? merchantSnapshot.data() : null;
@@ -657,7 +636,6 @@ function hydrateApp() {
   const name = state.store?.name || 'BuyQK Store';
   $('#header-store-name').textContent = name;
   $('#profile-store-name').textContent = name;
-  $('#profile-owner-email').textContent = state.user?.email || '—';
   $('#profile-avatar').textContent = name.charAt(0).toUpperCase();
   const approved = state.store?.isApproved === true && state.store?.status === 'active';
   $('#profile-status').textContent = approved ? 'Active store' : 'Pending approval';
@@ -1280,9 +1258,6 @@ document.addEventListener('keydown', (event) => {
   if (event.key === 'Enter' && event.target.matches('[data-order]')) openOrder(event.target.dataset.order);
 });
 
-$('#google-login-btn').addEventListener('click', login);
-$('#logout-btn').addEventListener('click', logout);
-$('#onboarding-logout-btn').addEventListener('click', logout);
 $('#business-form').addEventListener('submit', createBusiness);
 $('#location-btn').addEventListener('click', requestLocation);
 $('#manual-address-btn').addEventListener('click', () => openManualAddress(true));
@@ -1353,22 +1328,37 @@ document.addEventListener('error', (event) => {
 
 window.addEventListener('beforeunload', stopRealtime);
 
-getRedirectResult(auth).catch((error) => {
-  console.error(error);
-  if (error.code === 'auth/unauthorized-domain') toast('Add this deployed domain to Firebase Authorized domains.', true);
-});
 
-onAuthStateChanged(auth, async (user) => {
+let anonymousSignInPending = false;
+
+async function handleAuthState(user) {
   state.user = user;
   if (!user) {
     stopRealtime();
     state.merchant = null;
     state.store = null;
     state.storeId = null;
-    showScreen('login-screen');
+    showScreen('loading-screen');
+    setLoadingMessage('Starting your secure session…');
+    if (anonymousSignInPending) return;
+    anonymousSignInPending = true;
+    try {
+      await signInAnonymously(auth);
+    } catch (error) {
+      console.error(error);
+      const message = error.code === 'auth/operation-not-allowed'
+        ? 'Enable Anonymous sign-in in Firebase Authentication, then refresh.'
+        : 'Secure anonymous session could not start. Refresh and retry.';
+      setLoadingMessage(message);
+      toast(message, true);
+    } finally {
+      anonymousSignInPending = false;
+    }
     return;
   }
+
   showScreen('loading-screen');
+  setLoadingMessage('Connecting your store…');
   try {
     const ready = await loadMerchant();
     if (!ready) {
@@ -1382,7 +1372,20 @@ onAuthStateChanged(auth, async (user) => {
     showScreen('app-screen');
   } catch (error) {
     console.error(error);
-    toast(error.message || 'Merchant data could not load. Check Firestore rules.', true);
-    showScreen('login-screen');
+    const message = error.message || 'Merchant data could not load. Check Firestore rules.';
+    setLoadingMessage(message);
+    toast(message, true);
+    showScreen('loading-screen');
   }
-});
+}
+
+async function startAuthentication() {
+  try {
+    await setPersistence(auth, browserLocalPersistence);
+  } catch (error) {
+    console.warn('Firebase auth persistence could not be set explicitly.', error);
+  }
+  onAuthStateChanged(auth, handleAuthState);
+}
+
+startAuthentication();
