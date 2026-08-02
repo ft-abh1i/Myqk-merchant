@@ -9,7 +9,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="styles.css?v=20260802-direct-dashboard-3">
+  <link rel="stylesheet" href="styles.css?v=20260802-store-location-image-1">
 </head>
 <body>
   <div class="app-frame">
@@ -93,17 +93,33 @@
             <div class="section-title compact-title"><div><small>STORE DETAILS</small><h2>Customer information</h2></div></div>
             <label class="field"><span>Store name</span><input id="settings-store-name" type="text" maxlength="80" required></label>
             <label class="field"><span>Category</span><select id="settings-category" required><option value="groceries">Grocery</option><option value="food">Food & Restaurant</option><option value="pharmacy">Pharmacy</option><option value="beauty">Beauty</option><option value="kids">Kids</option><option value="electronics">Electronics</option><option value="services">Services</option><option value="other">Other</option></select></label>
-            <label class="field"><span>Description</span><textarea id="settings-description" maxlength="180" rows="3" required></textarea></label>
             <label class="field"><span>Store phone</span><input id="settings-phone" type="tel" inputmode="numeric" maxlength="10" required></label>
-            <label class="field"><span>Address</span><textarea id="settings-address" maxlength="240" rows="3" required></textarea></label>
+            <div class="field store-location-field">
+              <span>Store location</span>
+              <button class="secondary-button location-detect-button" id="settings-location-btn" type="button"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 21s7-6.1 7-12A7 7 0 1 0 5 9c0 5.9 7 12 7 12Z"/><circle cx="12" cy="9" r="2.5"/></svg>Use current location</button>
+              <small class="field-help" id="settings-location-status">Use GPS to detect the customer-facing address.</small>
+              <textarea id="settings-address" maxlength="240" rows="3" readonly required placeholder="Detected address will appear here"></textarea>
+            </div>
             <div class="field-row"><label class="field"><span>Opens</span><input id="settings-opening-time" type="time" required></label><label class="field"><span>Closes</span><input id="settings-closing-time" type="time" required></label></div>
             <div class="field-row"><label class="field"><span>Minimum order</span><input id="settings-minimum-order" type="number" min="0" step="1" required></label><label class="field"><span>Delivery radius (km)</span><input id="settings-radius" type="number" min="1" max="50" step="1" required></label></div>
             <button class="primary-button" id="save-store-settings-btn" type="submit">Save store details</button>
           </form>
 
-          <section class="form-card">
+          <section class="form-card store-image-card">
             <div class="section-title compact-title"><div><small>COVER PHOTO</small><h2>Store image</h2></div></div>
-            <label class="upload-row" for="store-image-update"><input id="store-image-update" type="file" accept="image/jpeg,image/png,image/webp"><span><svg viewBox="0 0 24 24"><path d="M12 16V4M7 9l5-5 5 5M4 15v5h16v-5"/></svg></span><div><strong>Choose a new photo</strong><small id="store-image-update-status">JPG, PNG or WebP</small></div></label>
+            <div class="store-image-picker">
+              <div class="store-image-preview">
+                <div class="store-image-placeholder" id="store-image-placeholder"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h16v14H4z"/><path d="m4 15 4-4 4 4 3-3 5 5"/><circle cx="16.5" cy="8.5" r="1.5"/></svg><strong>No image selected</strong><small>Add a clear storefront or brand photo</small></div>
+                <img id="store-image-preview" alt="Store cover preview" hidden>
+              </div>
+              <input id="store-image-update" type="file" accept="image/jpeg,image/png,image/webp" hidden>
+              <div class="store-image-actions">
+                <button class="secondary-button" id="choose-store-image-btn" type="button">Choose image</button>
+                <button class="image-remove hidden" id="remove-store-image-btn" type="button">Remove selection</button>
+              </div>
+              <div class="image-upload-progress hidden" id="store-image-progress" aria-hidden="true"><span id="store-image-progress-bar"></span></div>
+              <p class="field-help store-image-status" id="store-image-update-status">JPG, PNG or WebP · max 5 MB</p>
+            </div>
             <button class="secondary-button" id="save-store-image-btn" type="button">Save store photo</button>
           </section>
 
@@ -151,6 +167,6 @@
   </section>
 
   <div class="toast" id="toast" role="status" aria-live="polite"></div>
-  <script type="module" src="app.js?v=20260802-direct-dashboard-2"></script>
+  <script type="module" src="app.js?v=20260802-store-location-image-1"></script>
 </body>
 </html>
