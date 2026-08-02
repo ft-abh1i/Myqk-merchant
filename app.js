@@ -418,6 +418,18 @@ function stopRealtime() {
   state.unsubToday = null;
 }
 
+async function activateStoreIfNeeded() {
+  if (!state.storeId || !state.store) return;
+  if (state.store.isApproved === true && state.store.status === 'active') return;
+  await updateDoc(doc(db, 'stores', state.storeId), {
+    isApproved: true,
+    status: 'active',
+    isOpen: true,
+    updatedAt: serverTimestamp()
+  });
+  state.store = { ...state.store, isApproved: true, status: 'active', isOpen: true };
+}
+
 async function loadMerchant() {
   const merchantSnapshot = await getDoc(doc(db, 'merchants', state.user.uid));
   state.merchant = merchantSnapshot.exists() ? merchantSnapshot.data() : null;
@@ -426,6 +438,7 @@ async function loadMerchant() {
   const storeSnapshot = await getDoc(doc(db, 'stores', state.storeId));
   if (!storeSnapshot.exists()) throw new Error('Linked store was not found.');
   state.store = storeSnapshot.data();
+  await activateStoreIfNeeded();
   return true;
 }
 
@@ -684,8 +697,8 @@ async function createBusiness(event) {
       openingTime: $('#opening-time').value,
       closingTime: $('#closing-time').value,
       isOpen: true,
-      isApproved: false,
-      status: 'pending_approval',
+      isApproved: true,
+      status: 'active',
       minimumOrder: 99,
       deliveryRadiusKm: 8,
       rating: 0,
@@ -703,7 +716,7 @@ async function createBusiness(event) {
       phone,
       storeId: storeReference.id,
       onboardingComplete: true,
-      accountStatus: 'pending',
+      accountStatus: 'active',
       termsAccepted: true,
       createdAt: timestamp,
       updatedAt: timestamp
@@ -720,7 +733,7 @@ async function createBusiness(event) {
     hydrateApp();
     startRealtime();
     showScreen('app-screen');
-    toast('Business profile created. Store approval is pending.');
+    toast('Business profile created and activated.');
   } catch (error) {
     console.error(error);
     toast(error.message || 'Business profile could not be created.', true);
@@ -891,8 +904,8 @@ async function saveStoreSettings(event) {
         openingTime,
         closingTime,
         isOpen: true,
-        isApproved: false,
-        status: 'pending_approval',
+        isApproved: true,
+        status: 'active',
         minimumOrder,
         deliveryRadiusKm,
         rating: 0,
@@ -910,7 +923,7 @@ async function saveStoreSettings(event) {
         phone,
         storeId: storeReference.id,
         onboardingComplete: true,
-        accountStatus: 'pending',
+        accountStatus: 'active',
         termsAccepted: true,
         createdAt: timestamp,
         updatedAt: timestamp
@@ -926,7 +939,7 @@ async function saveStoreSettings(event) {
       hydrateApp();
       renderAll();
       startRealtime();
-      toast('Store connected. Approval is pending.');
+      toast('Store connected and live for customers.');
       return;
     }
 
@@ -1225,6 +1238,7 @@ async function saveProduct(event) {
   const button = $('#product-form button[type="submit"]');
   setButtonBusy(button, true, 'Saving…', 'Save product');
   try {
+    await activateStoreIfNeeded();
     const uploaded = await uploadImage(imageFile, {
       folder: `myqk/stores/${state.storeId}/products/${productReference.id}`,
       kind: 'product',
