@@ -83,11 +83,6 @@ function showScreen(id) {
   $('.screen').forEach((screen) => screen.classList.toggle('active', screen.id === id));
 }
 
-function setLoadingMessage(message) {
-  const element = $('#loading-message');
-  if (element) element.textContent = message;
-}
-
 function setButtonBusy(button, busy, busyText, normalText) {
   if (!button) return;
   button.disabled = busy;
@@ -610,8 +605,47 @@ async function createBusiness(event) {
   }
 }
 
+function dashboardStoreDefaults() {
+  return {
+    name: '',
+    category: 'groceries',
+    description: '',
+    phone: '',
+    address: { fullAddress: '' },
+    openingTime: '09:00',
+    closingTime: '21:00',
+    isOpen: false,
+    isApproved: false,
+    status: 'setup_required',
+    minimumOrder: 99,
+    deliveryRadiusKm: 8,
+    rating: 0,
+    totalRatings: 0,
+    imageUrl: '',
+    imagePublicId: ''
+  };
+}
+
+function showDashboardShell() {
+  if (!state.storeId) {
+    state.store = dashboardStoreDefaults();
+    state.products = [];
+    state.orders = [];
+  }
+  hydrateApp();
+  renderAll();
+  showScreen('app-screen');
+}
+
 function renderShopToggle() {
   const button = $('#shop-toggle');
+  if (!state.storeId) {
+    button.textContent = 'Setup';
+    button.className = 'status-toggle closed';
+    button.disabled = true;
+    return;
+  }
+  button.disabled = false;
   const open = state.store?.isOpen !== false;
   button.textContent = open ? 'Open' : 'Closed';
   button.className = `status-toggle ${open ? 'open' : 'closed'}`;
@@ -631,23 +665,35 @@ function hydrateStoreSettings() {
 }
 
 function hydrateApp() {
-  const name = state.store?.name || 'BuyQK Store';
+  const configured = Boolean(state.storeId);
+  const name = configured ? (state.store?.name || 'BuyQK Store') : 'Your store';
   $('#header-store-name').textContent = name;
   $('#profile-store-name').textContent = name;
   $('#profile-avatar').textContent = name.charAt(0).toUpperCase();
-  const approved = state.store?.isApproved === true && state.store?.status === 'active';
-  $('#profile-status').textContent = approved ? 'Active store' : 'Pending approval';
+  const approved = configured && state.store?.isApproved === true && state.store?.status === 'active';
+  $('#profile-status').textContent = !configured ? 'Setup required' : (approved ? 'Active store' : 'Pending approval');
   $('#approval-banner').classList.toggle('hidden', approved);
+  $('#approval-title').textContent = configured ? 'Store approval pending' : 'Store setup required';
+  $('#approval-copy').textContent = configured
+    ? 'You can finish products and inventory now. The store becomes visible to customers after approval.'
+    : 'Open the Store tab and save your details to connect the dashboard.';
   $('#profile-store-image').src = safeImageUrl(state.store?.imageUrl, name);
   $('#store-image-update-status').textContent = cloudinaryReady()
-    ? 'Choose a new cover photo and save.'
+    ? (configured ? 'Choose a new cover photo and save.' : 'Save store details before uploading a cover photo.')
     : 'Cloudinary configuration is required for uploads.';
   renderShopToggle();
   hydrateStoreSettings();
 }
 
+function requireStoreSetup() {
+  if (state.storeId) return true;
+  switchView('store');
+  toast('Save your store details first.', true);
+  return false;
+}
+
 async function toggleShop() {
-  if (!state.storeId) return;
+  if (!requireStoreSetup()) return;
   const next = !(state.store?.isOpen !== false);
   try {
     await updateDoc(doc(db, 'stores', state.storeId), { isOpen: next, updatedAt: serverTimestamp() });
@@ -660,29 +706,101 @@ async function toggleShop() {
 
 async function saveStoreSettings(event) {
   event.preventDefault();
+  if (!state.user) return toast('Secure session is starting. Try again in a moment.', true);
+
+  const name = $('#settings-store-name').value.trim();
+  const category = $('#settings-category').value;
+  const description = $('#settings-description').value.trim();
   const phone = $('#settings-phone').value.replace(/\D/g, '');
+  const fullAddress = $('#settings-address').value.trim();
+  const openingTime = $('#settings-opening-time').value;
+  const closingTime = $('#settings-closing-time').value;
   const minimumOrder = Number($('#settings-minimum-order').value);
   const deliveryRadiusKm = Number($('#settings-radius').value);
+
+  if (!name || !description || !fullAddress) return toast('Complete all store details.', true);
   if (!/^[6-9]\d{9}$/.test(phone)) return toast('Enter a valid 10-digit store phone number.', true);
   if (!Number.isFinite(minimumOrder) || minimumOrder < 0) return toast('Minimum order must be zero or more.', true);
   if (!Number.isFinite(deliveryRadiusKm) || deliveryRadiusKm <= 0) return toast('Delivery radius must be greater than zero.', true);
 
   const button = $('#save-store-settings-btn');
-  setButtonBusy(button, true, 'Saving…', 'Save store details');
+  setButtonBusy(button, true, state.storeId ? 'Saving…' : 'Connecting…', 'Save store details');
   try {
+    if (!state.storeId) {
+      const geocoded = await forwardGeocode(fullAddress);
+      const storeReference = doc(collection(db, 'stores'));
+      const timestamp = serverTimestamp();
+      const address = {
+        fullAddress,
+        locality: geocoded.address?.locality || '',
+        city: geocoded.address?.city || '',
+        state: geocoded.address?.state || '',
+        postalCode: geocoded.address?.postalCode || '',
+        country: geocoded.address?.country || 'India',
+        source: geocoded.address?.source || 'merchant_edit'
+      };
+      const store = {
+        merchantId: state.user.uid,
+        name,
+        category,
+        description,
+        phone,
+        address,
+        location: geocoded.location,
+        openingTime,
+        closingTime,
+        isOpen: true,
+        isApproved: false,
+        status: 'pending_approval',
+        minimumOrder,
+        deliveryRadiusKm,
+        rating: 0,
+        totalRatings: 0,
+        imageUrl: '',
+        imagePublicId: '',
+        createdAt: timestamp,
+        updatedAt: timestamp
+      };
+      const merchant = {
+        uid: state.user.uid,
+        fullName: name,
+        email: '',
+        photoURL: '',
+        phone,
+        storeId: storeReference.id,
+        onboardingComplete: true,
+        accountStatus: 'pending',
+        termsAccepted: true,
+        createdAt: timestamp,
+        updatedAt: timestamp
+      };
+      const batch = writeBatch(db);
+      batch.set(storeReference, store);
+      batch.set(doc(db, 'merchants', state.user.uid), merchant);
+      await batch.commit();
+      state.merchant = merchant;
+      state.store = store;
+      state.storeId = storeReference.id;
+      hydrateApp();
+      renderAll();
+      startRealtime();
+      toast('Store connected. Approval is pending.');
+      return;
+    }
+
     const address = {
       ...(state.store.address || {}),
-      fullAddress: $('#settings-address').value.trim(),
+      fullAddress,
       source: 'merchant_edit'
     };
     await updateDoc(doc(db, 'stores', state.storeId), {
-      name: $('#settings-store-name').value.trim(),
-      category: $('#settings-category').value,
-      description: $('#settings-description').value.trim(),
+      name,
+      category,
+      description,
       phone,
       address,
-      openingTime: $('#settings-opening-time').value,
-      closingTime: $('#settings-closing-time').value,
+      openingTime,
+      closingTime,
       minimumOrder,
       deliveryRadiusKm,
       updatedAt: serverTimestamp()
@@ -690,13 +808,14 @@ async function saveStoreSettings(event) {
     toast('Store details updated for customers and riders.');
   } catch (error) {
     console.error(error);
-    toast('Store details could not be saved.', true);
+    toast(error.message || 'Store details could not be saved.', true);
   } finally {
     setButtonBusy(button, false, 'Saving…', 'Save store details');
   }
 }
 
 async function saveStoreImage() {
+  if (!requireStoreSetup()) return;
   const file = $('#store-image-update').files?.[0];
   if (!file) return toast('Choose a store photo first.', true);
   const button = $('#save-store-image-btn');
@@ -754,6 +873,7 @@ function updateOrderAlert() {
 
 function startRealtime() {
   stopRealtime();
+  if (!state.storeId) return;
   state.hasInitialOrderSnapshot = false;
   state.knownPendingOrders = new Set();
 
@@ -913,6 +1033,7 @@ function resetProductForm() {
 }
 
 function openAddProduct() {
+  if (!requireStoreSetup()) return;
   resetProductForm();
   openModal('product-modal');
 }
@@ -942,6 +1063,7 @@ function editProduct(id) {
 
 async function saveProduct(event) {
   event.preventDefault();
+  if (!requireStoreSetup()) return;
   const id = $('#product-id').value;
   const imageFile = $('#product-image').files?.[0];
   const productReference = id
@@ -1256,16 +1378,6 @@ document.addEventListener('keydown', (event) => {
   if (event.key === 'Enter' && event.target.matches('[data-order]')) openOrder(event.target.dataset.order);
 });
 
-$('#business-form').addEventListener('submit', createBusiness);
-$('#location-btn').addEventListener('click', requestLocation);
-$('#manual-address-btn').addEventListener('click', () => openManualAddress(true));
-$('#shop-address').addEventListener('input', () => {
-  if ($('#shop-address').dataset.source === 'detected') state.resolvedAddress = null;
-  $('#shop-address').dataset.source = 'manual';
-  $('#location-status').textContent = state.location
-    ? 'Location pin saved. The address was edited manually.'
-    : 'Manual shop address added.';
-});
 $('#shop-toggle').addEventListener('click', toggleShop);
 $('#store-settings-form').addEventListener('submit', saveStoreSettings);
 $('#save-store-image-btn').addEventListener('click', saveStoreImage);
@@ -1277,12 +1389,6 @@ $('#product-search').addEventListener('input', (event) => {
   state.productFilter = event.target.value;
   renderProducts();
 });
-$('#shop-image').addEventListener('change', () => previewSelectedFile(
-  $('#shop-image'),
-  $('#shop-image-preview'),
-  $('#shop-image-status'),
-  'Required. The photo is compressed before upload.'
-));
 $('#product-image').addEventListener('change', () => previewSelectedFile(
   $('#product-image'),
   $('#product-image-preview'),
@@ -1313,7 +1419,6 @@ $$('[data-stock-filter]').forEach((button) => button.addEventListener('click', (
   state.stockFilter = button.dataset.stockFilter;
   renderInventory();
 }));
-$('#owner-phone').addEventListener('input', digitsOnly);
 $('#settings-phone').addEventListener('input', digitsOnly);
 
 document.addEventListener('error', (event) => {
@@ -1334,34 +1439,30 @@ async function handleAuthState(user) {
   if (!user) {
     stopRealtime();
     state.merchant = null;
-    state.store = null;
     state.storeId = null;
-    showScreen('loading-screen');
-    setLoadingMessage('Starting your secure session…');
+    showDashboardShell();
     if (anonymousSignInPending) return;
     anonymousSignInPending = true;
     try {
       await signInAnonymously(auth);
     } catch (error) {
       console.error(error);
-      const message = error.code === 'auth/operation-not-allowed'
-        ? 'Enable Anonymous sign-in in Firebase Authentication, then refresh.'
-        : 'Secure anonymous session could not start. Refresh and retry.';
-      setLoadingMessage(message);
-      toast(message, true);
+      toast(
+        error.code === 'auth/operation-not-allowed'
+          ? 'Enable Anonymous sign-in in Firebase Authentication.'
+          : 'Secure session could not start. Refresh and retry.',
+        true
+      );
     } finally {
       anonymousSignInPending = false;
     }
     return;
   }
 
-  showScreen('loading-screen');
-  setLoadingMessage('Connecting your store…');
   try {
     const ready = await loadMerchant();
     if (!ready) {
-      hydrateOnboarding();
-      showScreen('onboarding-screen');
+      showDashboardShell();
       return;
     }
     hydrateApp();
@@ -1370,10 +1471,8 @@ async function handleAuthState(user) {
     showScreen('app-screen');
   } catch (error) {
     console.error(error);
-    const message = error.message || 'Merchant data could not load. Check Firestore rules.';
-    setLoadingMessage(message);
-    toast(message, true);
-    showScreen('loading-screen');
+    showDashboardShell();
+    toast(error.message || 'Merchant data could not load. Check Firestore rules.', true);
   }
 }
 
@@ -1386,4 +1485,5 @@ async function startAuthentication() {
   onAuthStateChanged(auth, handleAuthState);
 }
 
+showDashboardShell();
 startAuthentication();
