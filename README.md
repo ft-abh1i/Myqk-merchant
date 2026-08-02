@@ -4,8 +4,8 @@ Mobile-first merchant MVP for the BuyQK local commerce platform.
 
 ## Working flows
 
-- Persistent Firebase Anonymous Authentication with no login page
-- One-time merchant and store onboarding
+- Direct dashboard startup with Firebase Anonymous Authentication running in the background
+- First-time store setup inside the dashboard's Store tab
 - GPS or verified manual pickup location
 - Compressed Cloudinary store and product images
 - Realtime products, inventory and merchant order queue
