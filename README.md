@@ -4,7 +4,7 @@ Mobile-first merchant MVP for the BuyQK local commerce platform.
 
 ## Working flows
 
-- Firebase Google sign-in with mobile redirect fallback
+- Persistent Firebase Anonymous Authentication with no login page
 - One-time merchant and store onboarding
 - GPS or verified manual pickup location
 - Compressed Cloudinary store and product images
@@ -29,8 +29,10 @@ New stores are created with `accountStatus: pending`, `isApproved: false`, and `
 
 ## Setup
 
-1. Enable Google sign-in in Firebase Authentication.
+1. Enable **Anonymous** sign-in in Firebase Authentication.
 2. Add the deployed merchant domain to Firebase Authorized domains.
 3. Deploy `firestore.rules` and `firestore.indexes.json` from this repository.
 4. Keep only the public Cloudinary cloud name and unsigned upload preset in `cloudinary-config.js`; never commit an API secret.
 5. Deploy the repository as a static site.
+
+Anonymous merchant identity is stored in the browser's Firebase session. Clearing site data or opening the app on another browser/device creates a new merchant identity.
